@@ -38,9 +38,30 @@ def execute(sql: str, params: list | None = None, retries: int = 3):
     raise RuntimeError(f"D1 query failed after {retries} attempts: {last_err}")
 
 
-def bulk_insert(table: str, columns: list[str], rows: list[tuple], chunk_size: int = 200,
+def _sql_literal(value) -> str:
+    """Inline value langsung ke teks SQL (bukan bound parameter).
+
+    D1 membatasi jumlah bound parameter per statement jauh lebih ketat
+    daripada SQLite biasa (gagal di sekitar ratusan, bukan 999) -- kalau
+    dipakai buat bulk insert ribuan baris, batasnya cepat kena. Data yang
+    di-insert di sini semuanya berasal dari pipeline kita sendiri (bukan
+    input user), jadi inlining dengan escaping manual ini aman dari SQL
+    injection, dan cuma dibatasi ukuran payload request, bukan jumlah
+    parameter.
+    """
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
+
+
+def bulk_insert(table: str, columns: list[str], rows: list[tuple], chunk_size: int = 500,
                  or_replace: bool = True):
-    """Insert banyak baris sekaligus, di-chunk biar gak kena limit ukuran request.
+    """Insert banyak baris sekaligus, di-chunk biar payload request gak raksasa.
 
     `rows` = list of tuple, urutan value harus sama persis dengan `columns`.
     """
@@ -53,12 +74,11 @@ def bulk_insert(table: str, columns: list[str], rows: list[tuple], chunk_size: i
 
     for i in range(0, len(rows), chunk_size):
         chunk = rows[i:i + chunk_size]
-        placeholders = ", ".join(
-            "(" + ", ".join(["?"] * len(columns)) + ")" for _ in chunk
+        values_sql = ", ".join(
+            "(" + ", ".join(_sql_literal(v) for v in row) + ")" for row in chunk
         )
-        flat_params = [v for row in chunk for v in row]
-        sql = f"{verb} {table} ({col_list}) VALUES {placeholders}"
-        execute(sql, flat_params)
+        sql = f"{verb} {table} ({col_list}) VALUES {values_sql}"
+        execute(sql)
         written += len(chunk)
 
     return written
