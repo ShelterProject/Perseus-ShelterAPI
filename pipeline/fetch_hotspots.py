@@ -58,9 +58,19 @@ def main():
         print("Tabel regions kosong -- jalankan seed_regions.py dulu.", file=sys.stderr)
         sys.exit(1)
 
+    # Skip di awal: checkpoint global (bukan per-region, karena FIRMS
+    # ditarik per-bbox-negara sekaligus) -- cuma lanjut dari acq_date
+    # terakhir yang sudah ada di DB, bukan fetch 5 tahun penuh tiap bulan.
+    existing = fetch_all("SELECT MAX(acq_date) AS max_date FROM raw_hotspots")
+    last_date = existing[0]["max_date"] if existing else None
+
     end = date.today()
-    start = end - timedelta(days=5 * 365)
+    start = date.fromisoformat(last_date) + timedelta(days=1) if last_date else end - timedelta(days=5 * 365)
     fetched_at = end.isoformat()
+
+    if start > end:
+        print("raw_hotspots sudah up-to-date, skip.")
+        return
 
     total = 0
     cursor = start

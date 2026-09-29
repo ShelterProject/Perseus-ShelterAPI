@@ -36,12 +36,29 @@ def main():
         print("Tabel seismic_zones kosong -- jalankan seed_regions.py dulu.", file=sys.stderr)
         sys.exit(1)
 
+    # Skip di awal per zona: cuma tarik dari event terakhir yang sudah ada
+    # di DB, bukan window 5 tahun penuh tiap bulan.
+    latest_per_zone = {
+        r["seismic_zone_id"]: r["max_date"]
+        for r in fetch_all(
+            "SELECT seismic_zone_id, MAX(event_time) AS max_date FROM raw_earthquake_events GROUP BY seismic_zone_id"
+        )
+    }
+
     end = date.today()
-    start = end - timedelta(days=5 * 365)
+    bootstrap_start = end - timedelta(days=5 * 365)
     fetched_at = end.isoformat()
 
     total = 0
+    skipped = 0
     for zone in zones:
+        last_date = latest_per_zone.get(zone["id"])
+        start = date.fromisoformat(last_date) + timedelta(days=1) if last_date else bootstrap_start
+        if start > end:
+            skipped += 1
+            print(f"Zona '{zone['name']}': sudah up-to-date, skip")
+            continue
+
         # USGS strict soal starttime > endtime; per tahun biar respons gak raksasa
         rows = []
         cursor = start
@@ -68,7 +85,7 @@ def main():
         total += n
         print(f"Zona '{zone['name']}': {n} event")
 
-    print(f"Selesai. Total baris raw_earthquake_events: {total}")
+    print(f"Selesai. Total baris raw_earthquake_events: {total} ({skipped} zona sudah up-to-date, di-skip)")
 
 
 if __name__ == "__main__":

@@ -72,11 +72,31 @@ def main():
         print("Tabel regions kosong -- jalankan seed_regions.py dulu.", file=sys.stderr)
         sys.exit(1)
 
+    # Skip DI AWAL (bukan fetch penuh lalu dibuang): tiap region cuma
+    # ditarik dari hari setelah data terakhirnya di DB -- bukan fetch ulang
+    # 5 tahun penuh tiap bulan. Region yang belum punya data sama sekali
+    # (bootstrap pertama) tetap dapat window 5 tahun penuh.
+    latest_per_region = {
+        r["region_id"]: r["max_date"]
+        for r in fetch_all("SELECT region_id, MAX(date) AS max_date FROM raw_weather GROUP BY region_id")
+    }
+
     end = date.today()
-    start = end - timedelta(days=5 * 365)
+    bootstrap_start = end - timedelta(days=5 * 365)
 
     total = 0
+    skipped = 0
     for idx, region in enumerate(regions, 1):
+        last_date = latest_per_region.get(region["id"])
+        if last_date:
+            start = date.fromisoformat(last_date) + timedelta(days=1)
+        else:
+            start = bootstrap_start
+
+        if start > end:
+            skipped += 1
+            continue
+
         rows = fetch_region_weather(region, start.isoformat(), end.isoformat())
         n = bulk_insert(
             "raw_weather",
@@ -89,7 +109,7 @@ def main():
             print(f"[{idx}/{len(regions)}] region_id={region['id']} -> {n} baris")
         time.sleep(0.2)  # sopan ke Open-Meteo, gak ada rate limit resmi tapi tetap dijaga
 
-    print(f"Selesai. Total baris raw_weather: {total}")
+    print(f"Selesai. Total baris raw_weather: {total} ({skipped} region sudah up-to-date, di-skip)")
 
 
 if __name__ == "__main__":
