@@ -1,0 +1,15 @@
+name = "perseus-shelter-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# Untuk dev lokal: copy file ini jadi `wrangler.toml` (sudah di-gitignore)
+# dan ganti database_id di bawah dengan ID asli dari `wrangler d1 create`.
+#
+# Untuk deploy lewat GitHub Actions: JANGAN edit file ini. Workflow
+# `.github/workflows/deploy-worker.yml` men-generate `wrangler.toml` asli
+# dari template ini secara otomatis, mengisi database_id dari secret
+# D1_DATABASE_ID -- jadi ID asli gak pernah ke-commit ke git.
+[[d1_databases]]
+binding = "DB"
+database_name = "perseus-shelter-db"
+database_id = "__D1_DATABASE_ID__"

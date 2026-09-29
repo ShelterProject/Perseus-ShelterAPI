@@ -54,18 +54,27 @@ Repo ini **public** — tidak ada credential yang boleh di-hardcode.
 
 ## Setup (sekali di awal)
 
-1. Buat database: `wrangler d1 create perseus-shelter-db`, isi
-   `database_id` hasilnya ke `worker/wrangler.toml` (jangan commit kalau
-   repo tetap public — override lokal atau lewat Cloudflare dashboard).
-2. Terapkan skema: `wrangler d1 execute perseus-shelter-db --remote --file=d1/schema.sql`
-3. Set GitHub Secrets (Settings → Secrets and variables → Actions):
-   `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `D1_DATABASE_ID`, `FIRMS_MAP_KEY`
-4. Isi data referensi wilayah (sekali, sebelum job bulanan pertama):
-   `cd pipeline && pip install -r requirements.txt && python seed_regions.py`
-5. Deploy Worker: `cd worker && npm install && npm run deploy`
+1. `cd worker && npx wrangler login && npx wrangler d1 create perseus-shelter-db`
+   — copy `database_id` dari output-nya.
+2. Set GitHub Secrets (Settings → Secrets and variables → Actions):
+   `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `D1_DATABASE_ID`, `FIRMS_MAP_KEY`.
+   `database_id` dari langkah 1 masuk ke `D1_DATABASE_ID` — **tidak perlu**
+   diedit manual ke `worker/wrangler.toml.example`, workflow deploy yang
+   mengisinya otomatis saat build (lihat poin 3).
+3. Push ke `main` (atau trigger manual tab Actions → "Deploy Worker") —
+   workflow `deploy-worker.yml` men-generate `worker/wrangler.toml` dari
+   `wrangler.toml.example` (mengisi `database_id` dari secret), menerapkan
+   `d1/schema.sql`, lalu `wrangler deploy`. File `wrangler.toml` hasil
+   generate ini gitignored, jadi ID asli gak pernah nyangkut di git.
+4. Isi data referensi wilayah (sekali, sebelum job bulanan pertama) —
+   trigger manual workflow **"Monthly prediction pipeline"** dari tab
+   Actions, langkah pertamanya (`seed_regions.py`) otomatis isi 515
+   kabupaten/kota + zona seismik.
 
-Setelah itu, `monthly-pipeline.yml` jalan otomatis tiap tanggal 1. Bisa juga
-di-trigger manual lewat tab Actions → "Run workflow" buat testing.
+Setelah itu, `monthly-pipeline.yml` jalan otomatis tiap tanggal 1, dan
+`deploy-worker.yml` jalan otomatis tiap ada perubahan di `worker/` atau
+`d1/schema.sql`. Untuk dev lokal: copy `worker/wrangler.toml.example` jadi
+`worker/wrangler.toml` (gitignored) dan isi `database_id` manual.
 
 ## Menjalankan pipeline manual (lokal)
 

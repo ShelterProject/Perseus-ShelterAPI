@@ -17,12 +17,12 @@
 -- Provinsi & kabupaten/kota, diisi sekali dari layer `batas_administrasi`
 -- InaRISK BNPB (kode KDPPUM/KDPBPS = kode BPS resmi). Jarang berubah,
 -- di-refresh manual/tahunan, bukan bagian job bulanan.
-CREATE TABLE provinces (
+CREATE TABLE IF NOT EXISTS provinces (
     code        TEXT PRIMARY KEY,   -- kode provinsi BPS, contoh '12' = Sumatera Utara
     name        TEXT NOT NULL
 );
 
-CREATE TABLE regions (
+CREATE TABLE IF NOT EXISTS regions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     province_code   TEXT NOT NULL REFERENCES provinces(code),
     bps_code        TEXT UNIQUE,        -- kode kabupaten/kota BPS
@@ -30,12 +30,12 @@ CREATE TABLE regions (
     centroid_lat    REAL NOT NULL,      -- dipakai buat fetch cuaca/karhutla per titik & haversine
     centroid_lon    REAL NOT NULL
 );
-CREATE INDEX idx_regions_province ON regions(province_code);
+CREATE INDEX IF NOT EXISTS idx_regions_province ON regions(province_code);
 
 -- Zona seismik (Sumatera, Jawa-Nusa Tenggara, Sulawesi, Maluku-Papua, dst).
 -- Gempa dipecah per zona (bukan 1 model nasional) karena tiap zona proses
 -- geologisnya beda -- lihat diskusi sebelumnya.
-CREATE TABLE seismic_zones (
+CREATE TABLE IF NOT EXISTS seismic_zones (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL,
     min_lat     REAL NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE seismic_zones (
 -- Sumber: Open-Meteo (forecast + historical archive), 1 baris per
 -- region per hari. RH_avg & ff_avg dihitung manual dari data hourly
 -- (Open-Meteo daily API gak nyediain langsung).
-CREATE TABLE raw_weather (
+CREATE TABLE IF NOT EXISTS raw_weather (
     region_id       INTEGER NOT NULL REFERENCES regions(id),
     date            TEXT NOT NULL,      -- yyyy-MM-dd
     temp_min        REAL,               -- Tn
@@ -70,7 +70,7 @@ CREATE TABLE raw_weather (
 -- 1 baris = 1 event gempa asli (bukan agregat harian) -- agregasi
 -- harian (avg/min/max lintang-bujur-magnitudo-kedalaman) dihitung di
 -- tahap training, persis logika notebook lama.
-CREATE TABLE raw_earthquake_events (
+CREATE TABLE IF NOT EXISTS raw_earthquake_events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     seismic_zone_id INTEGER NOT NULL REFERENCES seismic_zones(id),
     event_time      TEXT NOT NULL,      -- ISO8601
@@ -81,11 +81,11 @@ CREATE TABLE raw_earthquake_events (
     usgs_id         TEXT UNIQUE,        -- dedup antar fetch bulanan
     fetched_at      TEXT NOT NULL
 );
-CREATE INDEX idx_quake_zone_time ON raw_earthquake_events(seismic_zone_id, event_time);
+CREATE INDEX IF NOT EXISTS idx_quake_zone_time ON raw_earthquake_events(seismic_zone_id, event_time);
 
 -- Sumber: NASA FIRMS (VIIRS SP untuk histori, NRT untuk data terbaru).
 -- 1 baris = 1 titik panas asli.
-CREATE TABLE raw_hotspots (
+CREATE TABLE IF NOT EXISTS raw_hotspots (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     region_id       INTEGER REFERENCES regions(id),   -- hasil resolve haversine ke kabupaten terdekat
     acq_date        TEXT NOT NULL,
@@ -96,10 +96,10 @@ CREATE TABLE raw_hotspots (
     frp             REAL,
     fetched_at      TEXT NOT NULL
 );
-CREATE INDEX idx_hotspot_region_date ON raw_hotspots(region_id, acq_date);
+CREATE INDEX IF NOT EXISTS idx_hotspot_region_date ON raw_hotspots(region_id, acq_date);
 -- Dedup antar fetch bulanan (window 5 tahun rolling selalu overlap dengan
 -- histori yang sudah ada) -- INSERT OR REPLACE butuh target constraint ini.
-CREATE UNIQUE INDEX idx_hotspot_unique ON raw_hotspots(region_id, acq_date, lat, lon);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hotspot_unique ON raw_hotspots(region_id, acq_date, lat, lon);
 
 -- ============================================================
 -- HASIL PREDIKSI (output training, yang dibaca API)
@@ -107,7 +107,7 @@ CREATE UNIQUE INDEX idx_hotspot_unique ON raw_hotspots(region_id, acq_date, lat,
 
 -- Hasil SARIMAX cuaca, forecast 365 hari ke depan per region.
 -- Di-replace penuh tiap bulan (delete generation lama, insert baru).
-CREATE TABLE prediction_weather (
+CREATE TABLE IF NOT EXISTS prediction_weather (
     region_id       INTEGER NOT NULL REFERENCES regions(id),
     date            TEXT NOT NULL,
     temp_min        REAL,
@@ -126,7 +126,7 @@ CREATE TABLE prediction_weather (
 -- Hasil SARIMAX gempa, forecast 365 hari ke depan per zona seismik,
 -- plus nearest_region_id hasil haversine (pengganti fungsi `terdekat()`
 -- di notebook lama).
-CREATE TABLE prediction_earthquake (
+CREATE TABLE IF NOT EXISTS prediction_earthquake (
     seismic_zone_id INTEGER NOT NULL REFERENCES seismic_zones(id),
     date            TEXT NOT NULL,
     lat_avg         REAL,
@@ -145,7 +145,7 @@ CREATE TABLE prediction_earthquake (
 
 -- Hasil Decision Tree Regressor per kabupaten/kota (~514 model),
 -- forecast 365 hari, fitur = prediction_weather + jarak haversine.
-CREATE TABLE prediction_forest_fire (
+CREATE TABLE IF NOT EXISTS prediction_forest_fire (
     region_id       INTEGER NOT NULL REFERENCES regions(id),
     date            TEXT NOT NULL,
     confidence      REAL,               -- 0-100, keluaran model
@@ -157,14 +157,14 @@ CREATE TABLE prediction_forest_fire (
 -- di-sample per region_id pakai operasi `identify`). Statis/jarang
 -- berubah -- di-refresh terpisah dari job bulanan ML (mis. tahunan),
 -- bukan time-series jadi gak ada kolom `date`.
-CREATE TABLE hazard_index_flood (
+CREATE TABLE IF NOT EXISTS hazard_index_flood (
     region_id       INTEGER PRIMARY KEY REFERENCES regions(id),
     hazard_index    REAL NOT NULL,      -- skala 0-1 dari InaRISK
     source_layer    TEXT NOT NULL,      -- nama layer InaRISK yang dipakai, buat audit
     fetched_at      TEXT NOT NULL
 );
 
-CREATE TABLE hazard_index_landslide (
+CREATE TABLE IF NOT EXISTS hazard_index_landslide (
     region_id       INTEGER PRIMARY KEY REFERENCES regions(id),
     hazard_index    REAL NOT NULL,
     source_layer    TEXT NOT NULL,
@@ -177,7 +177,7 @@ CREATE TABLE hazard_index_landslide (
 
 -- Log tiap kali job GitHub Actions jalan -- buat debug kalau salah
 -- satu sumber data gagal/berubah format di tengah jalan.
-CREATE TABLE pipeline_runs (
+CREATE TABLE IF NOT EXISTS pipeline_runs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     data_type       TEXT NOT NULL,      -- 'weather' | 'earthquake' | 'forest_fire' | 'hazard_flood' | 'hazard_landslide'
     started_at      TEXT NOT NULL,

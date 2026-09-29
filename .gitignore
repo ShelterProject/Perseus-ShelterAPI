@@ -15,6 +15,7 @@ venv/
 node_modules/
 .wrangler/
 dist/
+worker/wrangler.toml
 
 # OS
 .DS_Store
