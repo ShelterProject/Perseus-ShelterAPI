@@ -63,7 +63,7 @@ def main():
             "raw_earthquake_events",
             ["seismic_zone_id", "event_time", "lat", "lon", "magnitude", "depth_km", "usgs_id", "fetched_at"],
             rows,
-            or_replace=True,  # usgs_id UNIQUE -> dedup otomatis antar fetch bulanan
+            on_conflict="replace",  # usgs_id UNIQUE -> dedup otomatis antar fetch bulanan
         )
         total += n
         print(f"Zona '{zone['name']}': {n} event")

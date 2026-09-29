@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS seismic_zones (
     min_lon     REAL NOT NULL,
     max_lon     REAL NOT NULL
 );
+-- Index terpisah (bukan inline UNIQUE di kolom) supaya tetap bisa
+-- diterapkan lewat `IF NOT EXISTS` ke database yang tabelnya sudah
+-- kadung dibuat tanpa constraint ini di deploy pertama.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_seismic_zones_name ON seismic_zones(name);
 
 -- ============================================================
 -- RAW DATA (histori rolling 5 tahun, dipakai sebagai input training)

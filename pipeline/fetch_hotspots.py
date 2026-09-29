@@ -96,7 +96,7 @@ def main():
             "raw_hotspots",
             ["region_id", "acq_date", "lat", "lon", "brightness", "confidence", "frp", "fetched_at"],
             rows,
-            or_replace=True,  # unique index (region_id, acq_date, lat, lon) -> dedup antar fetch bulanan
+            on_conflict="replace",  # unique index (region_id, acq_date, lat, lon) -> dedup antar fetch bulanan
         )
         total += n
         cursor += timedelta(days=DAY_RANGE)

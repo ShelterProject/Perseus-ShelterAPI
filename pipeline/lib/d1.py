@@ -60,15 +60,29 @@ def _sql_literal(value) -> str:
 
 
 def bulk_insert(table: str, columns: list[str], rows: list[tuple], chunk_size: int = 500,
-                 or_replace: bool = True):
+                 on_conflict: str = "replace"):
     """Insert banyak baris sekaligus, di-chunk biar payload request gak raksasa.
 
     `rows` = list of tuple, urutan value harus sama persis dengan `columns`.
+    `on_conflict`:
+      - "replace" (default): INSERT OR REPLACE -- cocok buat tabel yang gak
+        di-referensikan FOREIGN KEY dari tabel lain (mis. prediction_*,
+        raw_earthquake_events/raw_hotspots yang di-dedup lewat unique index).
+      - "ignore": INSERT OR IGNORE -- WAJIB dipakai buat tabel referensi yang
+        primary key-nya di-FOREIGN KEY-kan dari tabel lain (regions,
+        provinces, seismic_zones). REPLACE bakal delete+insert ulang baris
+        (ganti `id` autoincrement-nya), yang mematahkan FK dari raw_weather/
+        prediction_* yang sudah terlanjur mereferensikan id lama.
+      - "abort" (default SQLite): INSERT INTO biasa, gagal kalau ada conflict.
     """
     if not rows:
         return 0
 
-    verb = "INSERT OR REPLACE INTO" if or_replace else "INSERT INTO"
+    verb = {
+        "replace": "INSERT OR REPLACE INTO",
+        "ignore": "INSERT OR IGNORE INTO",
+        "abort": "INSERT INTO",
+    }[on_conflict]
     col_list = ", ".join(columns)
     written = 0
 
