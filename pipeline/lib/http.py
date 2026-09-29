@@ -31,6 +31,15 @@ def get_with_retry(url: str, params: dict | None = None, timeout: int = DEFAULT_
                 last_exc = requests.HTTPError(f"429 Too Many Requests: {url}", response=resp)
                 continue
             resp.raise_for_status()
+            if not resp.text.strip():
+                # Kadang Open-Meteo balikin HTTP 200 tapi body kosong pas
+                # lagi throttle -- itu tetap kegagalan, bukan respons sah,
+                # walau raise_for_status() gak nangkep ini (status-nya 200).
+                print(f"Respons kosong (HTTP 200) dari {url.split('?')[0]}, dianggap gagal & di-retry")
+                last_exc = requests.RequestException(f"Empty response body: {url}", response=resp)
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                continue
             return resp
         except requests.RequestException as e:
             last_exc = e
