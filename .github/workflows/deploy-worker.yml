@@ -1,46 +1,29 @@
-name: Deploy Worker
+name: Apply Postgres schema
 
+# Worker/Hyperdrive deploy sengaja belum masuk sini -- baru terapkan
+# db/schema.sql ke Postgres (Aiven) dulu, biar pipeline fetch_*/train_*
+# punya tabel buat ditulis. Langkah deploy Worker + Hyperdrive disambung
+# lagi belakangan setelah setup TLS/CA-nya beres.
 on:
   push:
     branches: [main]
     paths:
-      - "worker/**"
       - "db/schema.sql"
   workflow_dispatch: {}
 
 jobs:
-  deploy:
+  apply-schema:
     runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      PGHOST: ${{ secrets.PG_HOST }}
-      PGPORT: ${{ secrets.PG_PORT }}
-      PGUSER: ${{ secrets.PG_USER }}
-      PGPASSWORD: ${{ secrets.PG_PASSWORD }}
-      PGDATABASE: ${{ secrets.PG_DATABASE }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - name: Terapkan skema ke Postgres (idempotent -- IF NOT EXISTS)
+        env:
+          PGHOST: ${{ secrets.PG_HOST }}
+          PGPORT: ${{ secrets.PG_PORT }}
+          PGUSER: ${{ secrets.PG_USER }}
+          PGPASSWORD: ${{ secrets.PG_PASSWORD }}
+          PGDATABASE: ${{ secrets.PG_DATABASE }}
         run: |
           echo "${{ secrets.PG_CA_CERT }}" > /tmp/aiven-ca.pem
           psql "sslmode=verify-ca sslrootcert=/tmp/aiven-ca.pem" -f db/schema.sql
-
-      - name: Generate wrangler.toml dari template (isi Hyperdrive ID dari secret)
-        working-directory: worker
-        run: |
-          sed "s/__HYPERDRIVE_ID__/${{ secrets.HYPERDRIVE_ID }}/" \
-            wrangler.toml.example > wrangler.toml
-
-      - name: Install dependencies
-        working-directory: worker
-        run: npm install
-
-      - name: Deploy
-        working-directory: worker
-        run: npx wrangler deploy
