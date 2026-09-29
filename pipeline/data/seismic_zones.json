@@ -1,0 +1,8 @@
+[
+  { "name": "Sumatera", "min_lat": -6.5, "max_lat": 6.5, "min_lon": 94.5, "max_lon": 106.5 },
+  { "name": "Jawa-Bali-Nusa Tenggara", "min_lat": -11.5, "max_lat": -5.0, "min_lon": 105.0, "max_lon": 125.5 },
+  { "name": "Kalimantan", "min_lat": -4.5, "max_lat": 7.5, "min_lon": 108.0, "max_lon": 119.5 },
+  { "name": "Sulawesi", "min_lat": -6.5, "max_lat": 2.0, "min_lon": 118.5, "max_lon": 125.5 },
+  { "name": "Maluku", "min_lat": -8.5, "max_lat": 3.5, "min_lon": 124.0, "max_lon": 135.0 },
+  { "name": "Papua", "min_lat": -9.5, "max_lat": 0.5, "min_lon": 130.0, "max_lon": 141.5 }
+]

@@ -52,7 +52,37 @@ Repo ini **public** — tidak ada credential yang boleh di-hardcode.
 - Cloudflare: `CLOUDFLARE_API_TOKEN` juga disimpan sebagai GitHub secret,
   dipakai job Actions buat nulis ke D1 lewat Wrangler/REST API.
 
+## Setup (sekali di awal)
+
+1. Buat database: `wrangler d1 create perseus-shelter-db`, isi
+   `database_id` hasilnya ke `worker/wrangler.toml` (jangan commit kalau
+   repo tetap public — override lokal atau lewat Cloudflare dashboard).
+2. Terapkan skema: `wrangler d1 execute perseus-shelter-db --remote --file=d1/schema.sql`
+3. Set GitHub Secrets (Settings → Secrets and variables → Actions):
+   `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `D1_DATABASE_ID`, `FIRMS_MAP_KEY`
+4. Isi data referensi wilayah (sekali, sebelum job bulanan pertama):
+   `cd pipeline && pip install -r requirements.txt && python seed_regions.py`
+5. Deploy Worker: `cd worker && npm install && npm run deploy`
+
+Setelah itu, `monthly-pipeline.yml` jalan otomatis tiap tanggal 1. Bisa juga
+di-trigger manual lewat tab Actions → "Run workflow" buat testing.
+
+## Menjalankan pipeline manual (lokal)
+
+```bash
+cd pipeline
+pip install -r requirements.txt
+cp ../.env.example ../.env   # isi nilainya, lalu export atau pakai python-dotenv
+python fetch_weather.py
+python fetch_earthquake.py
+python fetch_hotspots.py
+python train_weather.py       # harus setelah fetch_weather
+python train_earthquake.py    # harus setelah fetch_earthquake
+python train_forest_fire.py   # harus setelah train_weather & fetch_hotspots
+```
+
 ## Status
 
-Skema D1 dan sumber data sudah diverifikasi. Script `pipeline/` dan
-`worker/` menyusul.
+Skema D1, seluruh sumber data, script `pipeline/` (fetch + training), dan
+`worker/` (API) sudah ada. Belum dikerjakan: langkah "Notified" (push
+notification FCM saat ada prediksi ekstrem) dan deploy end-to-end pertama.

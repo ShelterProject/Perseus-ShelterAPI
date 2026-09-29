@@ -97,6 +97,9 @@ CREATE TABLE raw_hotspots (
     fetched_at      TEXT NOT NULL
 );
 CREATE INDEX idx_hotspot_region_date ON raw_hotspots(region_id, acq_date);
+-- Dedup antar fetch bulanan (window 5 tahun rolling selalu overlap dengan
+-- histori yang sudah ada) -- INSERT OR REPLACE butuh target constraint ini.
+CREATE UNIQUE INDEX idx_hotspot_unique ON raw_hotspots(region_id, acq_date, lat, lon);
 
 -- ============================================================
 -- HASIL PREDIKSI (output training, yang dibaca API)

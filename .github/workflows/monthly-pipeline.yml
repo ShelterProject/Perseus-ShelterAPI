@@ -1,0 +1,53 @@
+name: Monthly prediction pipeline
+
+on:
+  schedule:
+    - cron: "0 0 1 * *"   # tanggal 1 tiap bulan, 00:00 UTC
+  workflow_dispatch: {}     # buat trigger manual pas testing
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+      FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Seed wilayah & zona seismik (idempotent)
+        working-directory: pipeline
+        run: python seed_regions.py
+
+      - name: Fetch cuaca (Open-Meteo)
+        working-directory: pipeline
+        run: python fetch_weather.py
+
+      - name: Fetch gempa (USGS)
+        working-directory: pipeline
+        run: python fetch_earthquake.py
+
+      - name: Fetch titik panas (NASA FIRMS)
+        working-directory: pipeline
+        run: python fetch_hotspots.py
+
+      - name: Train & forecast cuaca (SARIMAX)
+        working-directory: pipeline
+        run: python train_weather.py
+
+      - name: Train & forecast gempa (SARIMAX)
+        working-directory: pipeline
+        run: python train_earthquake.py
+
+      - name: Train & forecast karhutla (Decision Tree)
+        working-directory: pipeline
+        run: python train_forest_fire.py
