@@ -120,9 +120,22 @@ python train_earthquake.py    # harus setelah fetch_earthquake
 python train_forest_fire.py   # harus setelah train_weather & fetch_hotspots
 ```
 
+## Auto-retry saat bootstrap
+
+`auto-retry-pipeline.yml` mendengarkan hasil **"Monthly prediction
+pipeline"** -- kalau gagal (mis. kena rate limit Open-Meteo/FIRMS di
+tengah bootstrap 514 region), otomatis trigger ulang setelah jeda 2
+menit. Aman karena `fetch_*.py` incremental (skip yang sudah ada), jadi
+gak perlu diklik manual tiap kali gagal selama proses bootstrap awal.
+Setelah semua region punya data lengkap, kegagalan jadi jarang (cuma
+narik data ~30 hari baru/bulan), jadi auto-retry ini efeknya makin gak
+kepake sendirinya.
+
 ## Status
 
 Skema Postgres, seluruh sumber data, script `pipeline/` (fetch incremental
-+ training), script migrasi dari D1, dan `worker/` (API lewat Hyperdrive)
-sudah ada. Belum dikerjakan: langkah "Notified" (push notification FCM
-saat ada prediksi ekstrem) dan deploy end-to-end pertama ke Aiven.
++ training, dengan auto-retry di CI), script migrasi dari D1, dan
+`worker/` (API lewat Hyperdrive, untuk sementara belum di-deploy otomatis
+-- lihat `deploy-worker.yml`) sudah ada. Belum dikerjakan: langkah
+"Notified" (push notification FCM saat ada prediksi ekstrem), setup
+Hyperdrive yang mulus (CA cert), dan deploy end-to-end pertama.

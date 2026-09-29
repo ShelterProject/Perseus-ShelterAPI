@@ -1,0 +1,31 @@
+name: Auto-retry pipeline on failure
+
+# Dengerin hasil "Monthly prediction pipeline" -- kalau gagal, trigger
+# ulang otomatis setelah jeda pendek. Aman dilakukan berkali-kali karena
+# fetch_*.py incremental (skip yang sudah ada, lanjut dari yang belum),
+# jadi tiap retry beneran lanjut maju, bukan ngulang dari nol.
+#
+# Kalau ternyata gagal-gagal terus tanpa progres (bukan lagi soal rate
+# limit sementara, tapi bug/kredensial salah), auto-retry ini bakal terus
+# nyoba tanpa henti -- cek tab Actions manual kalau ada indikasi itu.
+on:
+  workflow_run:
+    workflows: ["Monthly prediction pipeline"]
+    types: [completed]
+
+permissions:
+  actions: write  # wajib buat gh workflow run bisa trigger workflow lain
+
+jobs:
+  retry-on-failure:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tunggu sebentar sebelum retry (biar rate limit sempat reda)
+        run: sleep 120
+
+      - name: Trigger ulang "Monthly prediction pipeline"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run monthly-pipeline.yml --repo "${{ github.repository }}"
