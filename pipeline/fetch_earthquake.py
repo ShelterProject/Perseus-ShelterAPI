@@ -8,9 +8,8 @@ di bawah, biar aman meski kemungkinan besar tiap zona jauh di bawah limit).
 import sys
 from datetime import date, timedelta
 
-import requests
-
 from lib.d1 import bulk_insert, fetch_all
+from lib.http import get_with_retry
 
 USGS_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 MIN_MAGNITUDE = 1.0
@@ -27,8 +26,7 @@ def fetch_zone_events(zone: dict, start_date: str, end_date: str) -> list[dict]:
         "maxlongitude": zone["max_lon"],
         "minmagnitude": MIN_MAGNITUDE,
     }
-    resp = requests.get(USGS_URL, params=params, timeout=60)
-    resp.raise_for_status()
+    resp = get_with_retry(USGS_URL, params=params)
     return resp.json().get("features", [])
 
 

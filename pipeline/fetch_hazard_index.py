@@ -11,9 +11,8 @@ sesuai keputusan sebelumnya bahwa data ini sifatnya statis.
 import sys
 from datetime import date
 
-import requests
-
 from lib.d1 import bulk_insert, fetch_all
+from lib.http import get_with_retry
 
 LAYERS = {
     "flood": "INDEKS_BAHAYA_BANJIR",
@@ -32,8 +31,7 @@ def identify(layer_name: str, lat: float, lon: float) -> float | None:
         "returnGeometry": "false",
         "f": "json",
     }
-    resp = requests.get(IDENTIFY_URL_TMPL.format(layer=layer_name), params=params, timeout=20)
-    resp.raise_for_status()
+    resp = get_with_retry(IDENTIFY_URL_TMPL.format(layer=layer_name), params=params)
     value = resp.json().get("value")
     if value is None or value == "NoData":
         return None

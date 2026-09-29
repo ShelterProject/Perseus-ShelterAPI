@@ -9,9 +9,8 @@ import time
 from datetime import date, timedelta
 from statistics import mean
 
-import requests
-
 from lib.d1 import bulk_insert, fetch_all
+from lib.http import get_with_retry
 
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 DAILY_VARS = "temperature_2m_min,temperature_2m_max,temperature_2m_mean,precipitation_sum,sunshine_duration,wind_speed_10m_max"
@@ -28,8 +27,7 @@ def fetch_region_weather(region: dict, start_date: str, end_date: str) -> list[t
         "hourly": HOURLY_VARS,
         "timezone": "Asia/Jakarta",
     }
-    resp = requests.get(ARCHIVE_URL, params=params, timeout=30)
-    resp.raise_for_status()
+    resp = get_with_retry(ARCHIVE_URL, params=params)
     data = resp.json()
 
     daily = data.get("daily", {})

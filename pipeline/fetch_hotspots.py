@@ -15,10 +15,9 @@ import sys
 import time
 from datetime import date, timedelta
 
-import requests
-
 from lib.d1 import bulk_insert, fetch_all
 from lib.geo import nearest
+from lib.http import get_with_retry
 
 FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 SOURCE = "VIIRS_SNPP_SP"
@@ -42,8 +41,7 @@ def firms_map_key() -> str:
 
 def fetch_chunk(map_key: str, start: date) -> list[dict]:
     url = f"{FIRMS_BASE}/{map_key}/{SOURCE}/{INDONESIA_BBOX}/{DAY_RANGE}/{start.isoformat()}"
-    resp = requests.get(url, timeout=60)
-    resp.raise_for_status()
+    resp = get_with_retry(url)
     text = resp.text.strip()
     if not text or text.startswith("Invalid") or text.startswith("Error"):
         if text:
