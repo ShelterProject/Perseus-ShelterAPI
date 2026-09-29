@@ -1,0 +1,20 @@
+# Secrets — jangan pernah commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / Cloudflare Workers
+node_modules/
+.wrangler/
+dist/
+
+# OS
+.DS_Store
