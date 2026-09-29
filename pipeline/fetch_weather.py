@@ -110,7 +110,7 @@ def main():
         total += n
         if idx % 25 == 0:
             print(f"[{idx}/{len(regions)}] region_id={region['id']} -> {n} baris")
-        time.sleep(0.2)  # sopan ke Open-Meteo, gak ada rate limit resmi tapi tetap dijaga
+        time.sleep(1.5)  # Open-Meteo ternyata rate-limit beneran (429) kalau digempur cepat
 
     print(f"Selesai. Total baris raw_weather: {total} ({skipped} region sudah up-to-date, di-skip)")
 

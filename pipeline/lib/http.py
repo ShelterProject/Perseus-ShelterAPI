@@ -8,7 +8,7 @@ import time
 import requests
 
 DEFAULT_TIMEOUT = 60
-MAX_RETRIES = 4
+MAX_RETRIES = 6
 
 
 def get_with_retry(url: str, params: dict | None = None, timeout: int = DEFAULT_TIMEOUT,
@@ -17,6 +17,16 @@ def get_with_retry(url: str, params: dict | None = None, timeout: int = DEFAULT_
     for attempt in range(max_retries):
         try:
             resp = requests.get(url, params=params, timeout=timeout)
+            if resp.status_code == 429:
+                # Rate limit beneran (bukan error transient biasa) --
+                # hormati Retry-After kalau server kasih tahu, kalau
+                # enggak, tunggu jauh lebih lama daripada backoff normal.
+                retry_after = resp.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after else 30 * (attempt + 1)
+                print(f"429 Too Many Requests dari {url.split('?')[0]}, tunggu {wait:.0f}s ...")
+                time.sleep(wait)
+                last_exc = requests.HTTPError(f"429 Too Many Requests: {url}", response=resp)
+                continue
             resp.raise_for_status()
             return resp
         except requests.RequestException as e:
