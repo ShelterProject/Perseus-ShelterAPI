@@ -45,7 +45,10 @@ def get_with_retry(url: str, params: dict | None = None, timeout: int = DEFAULT_
                 # JSON pas lagi throttle -- itu tetap kegagalan, walau
                 # raise_for_status() gak nangkep ini (status-nya 200).
                 reason = "kosong" if not resp.text.strip() else "bukan JSON valid"
+                preview = resp.text[:300].replace("\n", " ")
                 print(f"Respons {reason} (HTTP 200) dari {url.split('?')[0]}, dianggap gagal & di-retry")
+                print(f"  Isi body (300 char pertama): {preview!r}")
+                print(f"  Header respons: {dict(resp.headers)}")
                 last_exc = requests.RequestException(f"Invalid response body ({reason}): {url}", response=resp)
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
