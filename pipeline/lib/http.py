@@ -8,7 +8,7 @@ import time
 import requests
 
 DEFAULT_TIMEOUT = 60
-MAX_RETRIES = 6
+MAX_RETRIES = 10
 
 
 def get_with_retry(url: str, params: dict | None = None, timeout: int = DEFAULT_TIMEOUT,
@@ -20,9 +20,12 @@ def get_with_retry(url: str, params: dict | None = None, timeout: int = DEFAULT_
             if resp.status_code == 429:
                 # Rate limit beneran (bukan error transient biasa) --
                 # hormati Retry-After kalau server kasih tahu, kalau
-                # enggak, tunggu jauh lebih lama daripada backoff normal.
+                # enggak, tunggu lebih lama dari backoff normal (tapi
+                # dibatasi biar 10x retry gak jadi berjam-jam sendirian --
+                # jeda antar-batch di fetch_weather.py yang jadi
+                # pencegahan utama, ini cuma jaring pengaman).
                 retry_after = resp.headers.get("Retry-After")
-                wait = float(retry_after) if retry_after else 30 * (attempt + 1)
+                wait = float(retry_after) if retry_after else min(20 * (attempt + 1), 120)
                 print(f"429 Too Many Requests dari {url.split('?')[0]}, tunggu {wait:.0f}s ...")
                 time.sleep(wait)
                 last_exc = requests.HTTPError(f"429 Too Many Requests: {url}", response=resp)

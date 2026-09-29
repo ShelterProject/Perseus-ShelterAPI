@@ -84,8 +84,12 @@ def main():
     end = date.today()
     bootstrap_start = end - timedelta(days=5 * 365)
 
+    BATCH_SIZE = 50
+    COOLDOWN_SECONDS = 300  # Open-Meteo rate-limit-nya konsisten muncul tiap ~50 request
+
     total = 0
     skipped = 0
+    fetched_count = 0
     for idx, region in enumerate(regions, 1):
         last_date = latest_per_region.get(region["id"])
         if last_date:
@@ -108,9 +112,15 @@ def main():
             on_conflict="replace", conflict_target="region_id, date",
         )
         total += n
+        fetched_count += 1
         if idx % 25 == 0:
             print(f"[{idx}/{len(regions)}] region_id={region['id']} -> {n} baris")
-        time.sleep(1.5)  # Open-Meteo ternyata rate-limit beneran (429) kalau digempur cepat
+
+        if fetched_count % BATCH_SIZE == 0:
+            print(f"Sudah {fetched_count} request ke Open-Meteo, cooldown {COOLDOWN_SECONDS}s ...")
+            time.sleep(COOLDOWN_SECONDS)
+        else:
+            time.sleep(0.2)
 
     print(f"Selesai. Total baris raw_weather: {total} ({skipped} region sudah up-to-date, di-skip)")
 
