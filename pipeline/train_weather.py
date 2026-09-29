@@ -13,7 +13,7 @@ from datetime import date, timedelta
 import pandas as pd
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-from lib.d1 import bulk_insert, fetch_all
+from lib.pg import bulk_insert, fetch_all
 
 warnings.filterwarnings("ignore")
 
@@ -59,7 +59,7 @@ def main():
         region_id = region["id"]
         raw = fetch_all(
             "SELECT date, temp_min, temp_max, temp_mean, humidity_avg, rainfall, "
-            "sunshine_hours, wind_max, wind_avg FROM raw_weather WHERE region_id = ? ORDER BY date",
+            "sunshine_hours, wind_max, wind_avg FROM raw_weather WHERE region_id = %s ORDER BY date",
             [region_id],
         )
         if len(raw) < 60:
@@ -97,6 +97,7 @@ def main():
             ["region_id", "date", "temp_min", "temp_max", "temp_mean", "humidity_avg",
              "rainfall", "sunshine_hours", "wind_max", "wind_avg", "condition", "generated_at"],
             rows,
+            on_conflict="replace", conflict_target="region_id, date",
         )
         total += n
         if idx % 25 == 0:

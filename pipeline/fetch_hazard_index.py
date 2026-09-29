@@ -11,7 +11,7 @@ sesuai keputusan sebelumnya bahwa data ini sifatnya statis.
 import sys
 from datetime import date
 
-from lib.d1 import bulk_insert, fetch_all
+from lib.pg import bulk_insert, fetch_all
 from lib.http import get_with_retry
 
 LAYERS = {
@@ -58,7 +58,8 @@ def main():
             rows.append((region["id"], value, layer_name, fetched_at))
 
         table = f"hazard_index_{hazard_type}"
-        n = bulk_insert(table, ["region_id", "hazard_index", "source_layer", "fetched_at"], rows)
+        n = bulk_insert(table, ["region_id", "hazard_index", "source_layer", "fetched_at"], rows,
+                         on_conflict="replace", conflict_target="region_id")
         print(f"{table}: {n} dari {len(regions)} region punya nilai")
 
 

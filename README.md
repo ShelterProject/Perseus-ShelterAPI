@@ -14,24 +14,34 @@ cakupan (seluruh Indonesia, bukan hanya Sumatera Utara).
 .github/workflows/   Cron bulanan yang menjalankan pipeline/
 pipeline/             Script Python: fetch data mentah + training
 worker/               Cloudflare Workers API (TypeScript) yang dibaca Mobile App
-d1/schema.sql         Skema Cloudflare D1
+db/schema.sql         Skema PostgreSQL (Aiven)
 ```
 
 ## Alur data
 
 ```
 GitHub Actions (bulanan)
-  -> fetch data 5 tahun rolling (Open-Meteo, USGS, NASA FIRMS, InaRISK BNPB)
-  -> tulis raw data ke D1
+  -> fetch data rolling (Open-Meteo, USGS, NASA FIRMS, InaRISK BNPB) --
+     incremental, cuma yang belum ada di DB, bukan 5 tahun ulang tiap bulan
+  -> tulis raw data ke PostgreSQL (Aiven)
   -> jalankan SARIMAX / Decision Tree
-  -> tulis hasil prediksi ke D1
-Cloudflare Workers API
-  -> baca dari D1, expose endpoint ke Mobile App
+  -> tulis hasil prediksi ke PostgreSQL
+Cloudflare Workers API (lewat Hyperdrive)
+  -> baca dari PostgreSQL, expose endpoint ke Mobile App
 Mobile App
   -> resolve GPS user -> provinsi/kabupaten terdekat -> tampilkan prediksi
 ```
 
-Detail lengkap ada di `d1/schema.sql` (komentar per tabel).
+Detail lengkap ada di `db/schema.sql` (komentar per tabel).
+
+## Kenapa PostgreSQL (Aiven), bukan Cloudflare D1
+
+Awalnya pakai D1, tapi D1 free tier punya limit **keras jumlah baris
+ditulis per hari** (bukan soal storage) -- kena pas bootstrap histori 5
+tahun untuk 514 kabupaten/kota. Postgres gak punya limit semacam itu, cuma
+dibatasi storage & koneksi. Aiven punya tier gratis permanen (1 CPU/1GB
+RAM/1GB storage) tanpa kartu kredit kadaluarsa kayak free-trial provider
+lain.
 
 ## Sumber data (bukan lagi BMKG Data Online / SiPongi manual)
 
@@ -49,32 +59,51 @@ Repo ini **public** — tidak ada credential yang boleh di-hardcode.
 - Lokal: copy `.env.example` ke `.env` (sudah di-gitignore).
 - CI (GitHub Actions): simpan sebagai **repository secret** (Settings →
   Secrets and variables → Actions), bukan sebagai env di file workflow.
-- Cloudflare: `CLOUDFLARE_API_TOKEN` juga disimpan sebagai GitHub secret,
-  dipakai job Actions buat nulis ke D1 lewat Wrangler/REST API.
+- Aiven mewajibkan koneksi TLS terverifikasi (`sslmode=verify-ca`) — CA
+  certificate-nya (dari tab Overview di dashboard Aiven, field "CA
+  certificate") disimpan utuh sebagai secret `PG_CA_CERT` (multi-baris,
+  paste apa adanya termasuk baris `-----BEGIN CERTIFICATE-----`).
+
+Daftar secret yang dibutuhkan:
+`PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `PG_CA_CERT`,
+`FIRMS_MAP_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `HYPERDRIVE_ID`.
 
 ## Setup (sekali di awal)
 
-1. `cd worker && npx wrangler login && npx wrangler d1 create perseus-shelter-db`
-   — copy `database_id` dari output-nya.
-2. Set GitHub Secrets (Settings → Secrets and variables → Actions):
-   `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `D1_DATABASE_ID`, `FIRMS_MAP_KEY`.
-   `database_id` dari langkah 1 masuk ke `D1_DATABASE_ID` — **tidak perlu**
-   diedit manual ke `worker/wrangler.toml.example`, workflow deploy yang
-   mengisinya otomatis saat build (lihat poin 3).
-3. Push ke `main` (atau trigger manual tab Actions → "Deploy Worker") —
-   workflow `deploy-worker.yml` men-generate `worker/wrangler.toml` dari
-   `wrangler.toml.example` (mengisi `database_id` dari secret), menerapkan
-   `d1/schema.sql`, lalu `wrangler deploy`. File `wrangler.toml` hasil
-   generate ini gitignored, jadi ID asli gak pernah nyangkut di git.
-4. Isi data referensi wilayah (sekali, sebelum job bulanan pertama) —
-   trigger manual workflow **"Monthly prediction pipeline"** dari tab
-   Actions, langkah pertamanya (`seed_regions.py`) otomatis isi 515
-   kabupaten/kota + zona seismik.
+1. Buat service PostgreSQL di [Aiven](https://aiven.io) (tier Free), copy
+   `Host`, `Port`, `User`, `Password`, `Database name`, dan `CA certificate`
+   dari tab Overview-nya.
+2. Set 6 secret Postgres di atas (`PG_HOST` s/d `PG_CA_CERT`) + `FIRMS_MAP_KEY`
+   di GitHub (Settings → Secrets and variables → Actions).
+3. Terapkan skema & isi data referensi wilayah — trigger manual dari tab
+   Actions: **"Deploy Worker"** dulu gak perlu, jalankan langsung
+   **"Monthly prediction pipeline"** (langkah pertamanya `seed_regions.py`
+   otomatis isi 515 kabupaten/kota + zona seismik; tabelnya sendiri baru
+   ada setelah `db/schema.sql` diterapkan lewat langkah 5 di bawah, jadi
+   urutan yang benar: langkah 4-5 dulu, baru pipeline).
+4. Buat Hyperdrive (connection pooler Workers ↔ Postgres):
+   ```bash
+   cd worker && npx wrangler login
+   npx wrangler hyperdrive create perseus-shelter-hyperdrive \
+     --connection-string="postgres://USER:PASSWORD@HOST:PORT/DATABASE?sslmode=require"
+   ```
+   Copy `id` dari output-nya ke secret GitHub `HYPERDRIVE_ID`, plus
+   `CLOUDFLARE_ACCOUNT_ID` & `CLOUDFLARE_API_TOKEN` (permission **Workers
+   Scripts: Edit**).
+5. Push ke `main` (atau trigger manual tab Actions → **"Deploy Worker"**) —
+   workflow ini menerapkan `db/schema.sql` ke Postgres via `psql`, generate
+   `worker/wrangler.toml` dari template (isi Hyperdrive ID dari secret),
+   lalu `wrangler deploy`.
+6. **Kalau sebelumnya sempat pakai D1** dan ada data lama yang mau
+   diselamatkan: trigger workflow **"Migrate D1 to Postgres (one-time)"**
+   sebelum lanjut ke langkah 7 (butuh secret D1 lama: `D1_DATABASE_ID` dkk,
+   masih tersimpan kalau belum dihapus).
+7. Trigger manual **"Monthly prediction pipeline"** dari tab Actions.
 
 Setelah itu, `monthly-pipeline.yml` jalan otomatis tiap tanggal 1, dan
 `deploy-worker.yml` jalan otomatis tiap ada perubahan di `worker/` atau
-`d1/schema.sql`. Untuk dev lokal: copy `worker/wrangler.toml.example` jadi
-`worker/wrangler.toml` (gitignored) dan isi `database_id` manual.
+`db/schema.sql`. Untuk dev lokal: copy `worker/wrangler.toml.example` jadi
+`worker/wrangler.toml` (gitignored) dan isi Hyperdrive ID manual.
 
 ## Menjalankan pipeline manual (lokal)
 
@@ -82,6 +111,7 @@ Setelah itu, `monthly-pipeline.yml` jalan otomatis tiap tanggal 1, dan
 cd pipeline
 pip install -r requirements.txt
 cp ../.env.example ../.env   # isi nilainya, lalu export atau pakai python-dotenv
+python seed_regions.py        # sekali di awal
 python fetch_weather.py
 python fetch_earthquake.py
 python fetch_hotspots.py
@@ -92,6 +122,7 @@ python train_forest_fire.py   # harus setelah train_weather & fetch_hotspots
 
 ## Status
 
-Skema D1, seluruh sumber data, script `pipeline/` (fetch + training), dan
-`worker/` (API) sudah ada. Belum dikerjakan: langkah "Notified" (push
-notification FCM saat ada prediksi ekstrem) dan deploy end-to-end pertama.
+Skema Postgres, seluruh sumber data, script `pipeline/` (fetch incremental
++ training), script migrasi dari D1, dan `worker/` (API lewat Hyperdrive)
+sudah ada. Belum dikerjakan: langkah "Notified" (push notification FCM
+saat ada prediksi ekstrem) dan deploy end-to-end pertama ke Aiven.

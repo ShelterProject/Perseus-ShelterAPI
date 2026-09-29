@@ -15,7 +15,7 @@ import sys
 import time
 from datetime import date, timedelta
 
-from lib.d1 import bulk_insert, fetch_all
+from lib.pg import bulk_insert, fetch_all
 from lib.geo import nearest
 from lib.http import get_with_retry
 
@@ -63,9 +63,11 @@ def main():
     # terakhir yang sudah ada di DB, bukan fetch 5 tahun penuh tiap bulan.
     existing = fetch_all("SELECT MAX(acq_date) AS max_date FROM raw_hotspots")
     last_date = existing[0]["max_date"] if existing else None
+    if last_date is not None and not isinstance(last_date, date):
+        last_date = date.fromisoformat(last_date)
 
     end = date.today()
-    start = date.fromisoformat(last_date) + timedelta(days=1) if last_date else end - timedelta(days=5 * 365)
+    start = last_date + timedelta(days=1) if last_date else end - timedelta(days=5 * 365)
     fetched_at = end.isoformat()
 
     if start > end:
@@ -106,7 +108,7 @@ def main():
             "raw_hotspots",
             ["region_id", "acq_date", "lat", "lon", "brightness", "confidence", "frp", "fetched_at"],
             rows,
-            on_conflict="replace",  # unique index (region_id, acq_date, lat, lon) -> dedup antar fetch bulanan
+            on_conflict="replace", conflict_target="region_id, acq_date, lat, lon",
         )
         total += n
         cursor += timedelta(days=DAY_RANGE)

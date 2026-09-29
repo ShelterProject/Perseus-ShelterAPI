@@ -2,7 +2,8 @@
 //
 // Satu-satunya server yang dikenal Mobile App. Semua sumber data eksternal
 // (Open-Meteo, USGS, FIRMS, InaRISK) cuma dipanggil oleh pipeline Python di
-// GitHub Actions -- Worker ini murni baca dari D1.
+// GitHub Actions -- Worker ini murni baca dari Postgres (lewat Hyperdrive,
+// Workers gak bisa konek TCP Postgres langsung).
 //
 // Endpoint:
 //   GET /predictions/weather?lat=&lon=&scope=city|province&radius_km=
@@ -14,17 +15,26 @@
 // `scope` default 'province' (tampilan terbesar sesuai keputusan produk).
 // `radius_km` kalau diisi, override scope -- ambil semua region dalam radius itu.
 
+import postgres from "postgres";
 import { Region, nearestRegion, regionsWithinRadius } from "./geo";
 
 export interface Env {
-  DB: D1Database;
+  HYPERDRIVE: Hyperdrive;
 }
 
-async function loadRegions(db: D1Database): Promise<Region[]> {
-  const { results } = await db
-    .prepare("SELECT id, province_code, bps_code, name, centroid_lat, centroid_lon FROM regions")
-    .all<Region>();
-  return results ?? [];
+// Whitelist tabel yang boleh di-query lewat handlePredictionQuery -- nama
+// tabel di sini gak pernah dari input user, cuma dipilih lewat routing
+// switch-case di bawah, jadi aman diinterpolasi ke SQL.
+type PredictionTable =
+  | "prediction_weather"
+  | "prediction_forest_fire"
+  | "hazard_index_flood"
+  | "hazard_index_landslide";
+
+async function loadRegions(sql: postgres.Sql): Promise<Region[]> {
+  return sql<Region[]>`
+    SELECT id, province_code, bps_code, name, centroid_lat, centroid_lon FROM regions
+  `;
 }
 
 function resolveTargetRegions(
@@ -63,44 +73,46 @@ function parseQuery(url: URL) {
 }
 
 async function handlePredictionQuery(
-  env: Env,
+  sql: postgres.Sql,
   url: URL,
-  table: string,
-  extraOrderCol = "date"
+  table: PredictionTable,
+  orderCol: string = "date"
 ): Promise<Response> {
   const { lat, lon, scope, radiusKm } = parseQuery(url);
   if (Number.isNaN(lat) || Number.isNaN(lon)) {
     return jsonResponse({ error: "lat & lon wajib diisi" }, 400);
   }
 
-  const regions = await loadRegions(env.DB);
+  const regions = await loadRegions(sql);
   const targets = resolveTargetRegions(regions, lat, lon, scope, radiusKm);
   if (targets.length === 0) {
     return jsonResponse({ error: "Tidak ada wilayah ditemukan di sekitar koordinat ini" }, 404);
   }
 
   const ids = targets.map((r) => r.id);
-  const placeholders = ids.map(() => "?").join(",");
-  const { results } = await env.DB
-    .prepare(`SELECT * FROM ${table} WHERE region_id IN (${placeholders}) ORDER BY region_id, ${extraOrderCol}`)
-    .bind(...ids)
-    .all();
+  // Nama tabel & kolom di sini dari whitelist internal (PredictionTable +
+  // orderCol yang di-hardcode per pemanggilan), bukan dari input user --
+  // aman diinterpolasi. `ids` tetap lewat parameter binding (sql(ids)).
+  const rows = await sql.unsafe(
+    `SELECT * FROM ${table} WHERE region_id = ANY($1) ORDER BY region_id, ${orderCol}`,
+    [ids]
+  );
 
   return jsonResponse({
     resolved_regions: targets.map((r) => ({ id: r.id, name: r.name, province_code: r.province_code })),
     scope: radiusKm !== null ? "radius" : scope,
-    count: results?.length ?? 0,
-    data: results ?? [],
+    count: rows.length,
+    data: rows,
   });
 }
 
-async function handleEarthquakeQuery(env: Env, url: URL): Promise<Response> {
+async function handleEarthquakeQuery(sql: postgres.Sql, url: URL): Promise<Response> {
   const { lat, lon, scope, radiusKm } = parseQuery(url);
   if (Number.isNaN(lat) || Number.isNaN(lon)) {
     return jsonResponse({ error: "lat & lon wajib diisi" }, 400);
   }
 
-  const regions = await loadRegions(env.DB);
+  const regions = await loadRegions(sql);
   const targets = resolveTargetRegions(regions, lat, lon, scope, radiusKm);
   if (targets.length === 0) {
     return jsonResponse({ error: "Tidak ada wilayah ditemukan di sekitar koordinat ini" }, 404);
@@ -109,17 +121,15 @@ async function handleEarthquakeQuery(env: Env, url: URL): Promise<Response> {
   // Gempa disimpan per zona seismik, bukan per kabupaten -- ambil lewat
   // nearest_region_id yang sudah di-resolve pipeline training.
   const ids = targets.map((r) => r.id);
-  const placeholders = ids.map(() => "?").join(",");
-  const { results } = await env.DB
-    .prepare(`SELECT * FROM prediction_earthquake WHERE nearest_region_id IN (${placeholders}) ORDER BY date`)
-    .bind(...ids)
-    .all();
+  const rows = await sql`
+    SELECT * FROM prediction_earthquake WHERE nearest_region_id = ANY(${ids}) ORDER BY date
+  `;
 
   return jsonResponse({
     resolved_regions: targets.map((r) => ({ id: r.id, name: r.name, province_code: r.province_code })),
     scope: radiusKm !== null ? "radius" : scope,
-    count: results?.length ?? 0,
-    data: results ?? [],
+    count: rows.length,
+    data: rows,
   });
 }
 
@@ -131,19 +141,30 @@ export default {
       return jsonResponse({ error: "Method not allowed" }, 405);
     }
 
-    switch (url.pathname) {
-      case "/predictions/weather":
-        return handlePredictionQuery(env, url, "prediction_weather");
-      case "/predictions/earthquake":
-        return handleEarthquakeQuery(env, url);
-      case "/predictions/forest-fire":
-        return handlePredictionQuery(env, url, "prediction_forest_fire");
-      case "/hazard-zones/flood":
-        return handlePredictionQuery(env, url, "hazard_index_flood", "region_id");
-      case "/hazard-zones/landslide":
-        return handlePredictionQuery(env, url, "hazard_index_landslide", "region_id");
-      default:
-        return jsonResponse({ error: "Not found" }, 404);
+    const sql = postgres(env.HYPERDRIVE.connectionString, {
+      max: 5,
+      fetch_types: false, // Hyperdrive gak dukung custom type introspection
+    });
+
+    try {
+      switch (url.pathname) {
+        case "/predictions/weather":
+          return await handlePredictionQuery(sql, url, "prediction_weather");
+        case "/predictions/earthquake":
+          return await handleEarthquakeQuery(sql, url);
+        case "/predictions/forest-fire":
+          return await handlePredictionQuery(sql, url, "prediction_forest_fire");
+        case "/hazard-zones/flood":
+          return await handlePredictionQuery(sql, url, "hazard_index_flood", "region_id");
+        case "/hazard-zones/landslide":
+          return await handlePredictionQuery(sql, url, "hazard_index_landslide", "region_id");
+        default:
+          return jsonResponse({ error: "Not found" }, 404);
+      }
+    } finally {
+      // Hyperdrive yang pegang pooling beneran; ctx.waitUntil bukan wajib
+      // di sini karena request sudah selesai diproses sebelum sql ditutup.
+      await sql.end({ timeout: 0 });
     }
   },
 };

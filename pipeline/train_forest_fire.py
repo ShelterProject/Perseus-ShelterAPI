@@ -18,7 +18,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeRegressor
 
-from lib.d1 import bulk_insert, fetch_all
+from lib.pg import bulk_insert, fetch_all
 
 MIN_TRAINING_ROWS = 20
 FEATURE_COLS = ["temp_min", "temp_max", "temp_mean", "humidity_avg", "rainfall", "sunshine_hours", "wind_max", "wind_avg"]
@@ -38,7 +38,7 @@ def main():
         region_id = region["id"]
 
         hotspots = fetch_all(
-            "SELECT acq_date, confidence FROM raw_hotspots WHERE region_id = ? AND confidence IS NOT NULL",
+            "SELECT acq_date, confidence FROM raw_hotspots WHERE region_id = %s AND confidence IS NOT NULL",
             [region_id],
         )
         if len(hotspots) < MIN_TRAINING_ROWS:
@@ -46,7 +46,7 @@ def main():
             continue
 
         hist_weather = fetch_all(
-            f"SELECT date, {', '.join(FEATURE_COLS)} FROM raw_weather WHERE region_id = ?",
+            f"SELECT date, {', '.join(FEATURE_COLS)} FROM raw_weather WHERE region_id = %s",
             [region_id],
         )
         if len(hist_weather) < MIN_TRAINING_ROWS:
@@ -71,7 +71,7 @@ def main():
         model.fit(X_scaled, y)
 
         future_weather = fetch_all(
-            f"SELECT date, {', '.join(FEATURE_COLS)} FROM prediction_weather WHERE region_id = ? ORDER BY date",
+            f"SELECT date, {', '.join(FEATURE_COLS)} FROM prediction_weather WHERE region_id = %s ORDER BY date",
             [region_id],
         )
         if not future_weather:
@@ -94,6 +94,7 @@ def main():
             "prediction_forest_fire",
             ["region_id", "date", "confidence", "generated_at"],
             rows,
+            on_conflict="replace", conflict_target="region_id, date",
         )
         total += n
         if idx % 25 == 0:

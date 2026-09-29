@@ -9,7 +9,7 @@ import time
 from datetime import date, timedelta
 from statistics import mean
 
-from lib.d1 import bulk_insert, fetch_all
+from lib.pg import bulk_insert, fetch_all
 from lib.http import get_with_retry
 
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
@@ -89,7 +89,9 @@ def main():
     for idx, region in enumerate(regions, 1):
         last_date = latest_per_region.get(region["id"])
         if last_date:
-            start = date.fromisoformat(last_date) + timedelta(days=1)
+            # psycopg2 balikin kolom DATE sebagai datetime.date, bukan string
+            last_date = last_date if isinstance(last_date, date) else date.fromisoformat(last_date)
+            start = last_date + timedelta(days=1)
         else:
             start = bootstrap_start
 
@@ -103,6 +105,7 @@ def main():
             ["region_id", "date", "temp_min", "temp_max", "temp_mean",
              "humidity_avg", "rainfall", "sunshine_hours", "wind_max", "wind_avg", "fetched_at"],
             rows,
+            on_conflict="replace", conflict_target="region_id, date",
         )
         total += n
         if idx % 25 == 0:

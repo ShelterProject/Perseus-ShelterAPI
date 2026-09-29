@@ -1,5 +1,9 @@
 """Tipis wrapper di atas Cloudflare D1 HTTP API.
 
+DIPERTAHANKAN CUMA BUAT `migrate_d1_to_pg.py` -- pipeline fetch_*/train_*
+sudah pindah ke Postgres (`lib/pg.py`) karena D1 free tier kena limit
+harian jumlah baris ditulis. Jangan dipakai lagi di script baru.
+
 Kredensial (CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, D1_DATABASE_ID)
 selalu dari environment variable -- jangan pernah di-hardcode, karena repo
 ini public. Di GitHub Actions, isi lewat repository secrets.

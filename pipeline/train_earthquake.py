@@ -15,7 +15,7 @@ from datetime import date
 import pandas as pd
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-from lib.d1 import bulk_insert, fetch_all
+from lib.pg import bulk_insert, fetch_all
 from lib.geo import nearest
 
 warnings.filterwarnings("ignore")
@@ -49,7 +49,7 @@ def main():
     for zone in zones:
         events = fetch_all(
             "SELECT event_time, lat, lon, magnitude, depth_km FROM raw_earthquake_events "
-            "WHERE seismic_zone_id = ? ORDER BY event_time",
+            "WHERE seismic_zone_id = %s ORDER BY event_time",
             [zone["id"]],
         )
         if len(events) < 60:
@@ -100,6 +100,7 @@ def main():
              "lon_avg", "lon_min", "lon_max", "magnitude_avg",
              "depth_min_km", "depth_max_km", "nearest_region_id", "generated_at"],
             rows,
+            on_conflict="replace", conflict_target="seismic_zone_id, date",
         )
         total += n
         print(f"Zona '{zone['name']}': {n} baris forecast")

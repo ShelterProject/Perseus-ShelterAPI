@@ -3,3 +3,4 @@ pandas
 statsmodels
 scikit-learn
 shapely
+psycopg2-binary

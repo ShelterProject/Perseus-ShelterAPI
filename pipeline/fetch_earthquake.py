@@ -8,7 +8,7 @@ di bawah, biar aman meski kemungkinan besar tiap zona jauh di bawah limit).
 import sys
 from datetime import date, timedelta
 
-from lib.d1 import bulk_insert, fetch_all
+from lib.pg import bulk_insert, fetch_all
 from lib.http import get_with_retry
 
 USGS_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
@@ -53,7 +53,11 @@ def main():
     skipped = 0
     for zone in zones:
         last_date = latest_per_zone.get(zone["id"])
-        start = date.fromisoformat(last_date) + timedelta(days=1) if last_date else bootstrap_start
+        if last_date:
+            last_date = last_date if isinstance(last_date, date) else date.fromisoformat(last_date)
+            start = last_date + timedelta(days=1)
+        else:
+            start = bootstrap_start
         if start > end:
             skipped += 1
             print(f"Zona '{zone['name']}': sudah up-to-date, skip")
@@ -80,7 +84,7 @@ def main():
             "raw_earthquake_events",
             ["seismic_zone_id", "event_time", "lat", "lon", "magnitude", "depth_km", "usgs_id", "fetched_at"],
             rows,
-            on_conflict="replace",  # usgs_id UNIQUE -> dedup otomatis antar fetch bulanan
+            on_conflict="replace", conflict_target="usgs_id",  # dedup otomatis antar fetch bulanan
         )
         total += n
         print(f"Zona '{zone['name']}': {n} event")

@@ -1,15 +1,21 @@
 name = "perseus-shelter-api"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 # Untuk dev lokal: copy file ini jadi `wrangler.toml` (sudah di-gitignore)
-# dan ganti database_id di bawah dengan ID asli dari `wrangler d1 create`.
+# dan ganti id di bawah dengan Hyperdrive ID asli dari
+# `wrangler hyperdrive create ...`.
 #
 # Untuk deploy lewat GitHub Actions: JANGAN edit file ini. Workflow
 # `.github/workflows/deploy-worker.yml` men-generate `wrangler.toml` asli
-# dari template ini secara otomatis, mengisi database_id dari secret
-# D1_DATABASE_ID -- jadi ID asli gak pernah ke-commit ke git.
-[[d1_databases]]
-binding = "DB"
-database_name = "perseus-shelter-db"
-database_id = "__D1_DATABASE_ID__"
+# dari template ini secara otomatis, mengisi id dari secret HYPERDRIVE_ID
+# -- jadi ID asli gak pernah ke-commit ke git.
+#
+# Workers gak bisa konek TCP Postgres langsung -- Hyperdrive yang jadi
+# connection pooler-nya. String koneksi asli (host/user/password/CA Aiven)
+# disimpan di sisi Hyperdrive sendiri (dibuat sekali lewat `wrangler
+# hyperdrive create`), bukan di file ini.
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "__HYPERDRIVE_ID__"
