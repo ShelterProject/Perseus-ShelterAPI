@@ -27,7 +27,7 @@ def fetch_region_weather(region: dict, start_date: str, end_date: str) -> list[t
         "hourly": HOURLY_VARS,
         "timezone": "Asia/Jakarta",
     }
-    resp = get_with_retry(ARCHIVE_URL, params=params)
+    resp = get_with_retry(ARCHIVE_URL, params=params, expect_json=True)
     data = resp.json()
 
     daily = data.get("daily", {})

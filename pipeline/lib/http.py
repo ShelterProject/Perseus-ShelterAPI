@@ -4,6 +4,7 @@ Sumber eksternal (Open-Meteo, USGS, FIRMS, InaRISK) sesekali timeout/putus
 di tengah ratusan request berturutan; ini bukan kegagalan permanen, jadi
 di-retry dulu sebelum bikin seluruh job gagal.
 """
+import json
 import time
 import requests
 
@@ -12,7 +13,13 @@ MAX_RETRIES = 10
 
 
 def get_with_retry(url: str, params: dict | None = None, timeout: int = DEFAULT_TIMEOUT,
-                    max_retries: int = MAX_RETRIES) -> requests.Response:
+                    max_retries: int = MAX_RETRIES, expect_json: bool = False) -> requests.Response:
+    """`expect_json=True` buat endpoint yang seharusnya SELALU balikin JSON
+    (Open-Meteo, USGS, InaRISK) -- kalau body-nya bukan JSON valid (server
+    lagi throttle & balikin teks/HTML error dengan status 200, bukan 429),
+    itu dianggap gagal & di-retry, bukan langsung diteruskan ke caller buat
+    meledak di `resp.json()`. JANGAN dipakai buat endpoint non-JSON kayak
+    FIRMS (CSV)."""
     last_exc = None
     for attempt in range(max_retries):
         try:
@@ -31,12 +38,15 @@ def get_with_retry(url: str, params: dict | None = None, timeout: int = DEFAULT_
                 last_exc = requests.HTTPError(f"429 Too Many Requests: {url}", response=resp)
                 continue
             resp.raise_for_status()
-            if not resp.text.strip():
-                # Kadang Open-Meteo balikin HTTP 200 tapi body kosong pas
-                # lagi throttle -- itu tetap kegagalan, bukan respons sah,
-                # walau raise_for_status() gak nangkep ini (status-nya 200).
-                print(f"Respons kosong (HTTP 200) dari {url.split('?')[0]}, dianggap gagal & di-retry")
-                last_exc = requests.RequestException(f"Empty response body: {url}", response=resp)
+
+            invalid_body = expect_json and _not_valid_json(resp.text)
+            if not resp.text.strip() or invalid_body:
+                # Kadang server balikin HTTP 200 tapi body kosong/bukan
+                # JSON pas lagi throttle -- itu tetap kegagalan, walau
+                # raise_for_status() gak nangkep ini (status-nya 200).
+                reason = "kosong" if not resp.text.strip() else "bukan JSON valid"
+                print(f"Respons {reason} (HTTP 200) dari {url.split('?')[0]}, dianggap gagal & di-retry")
+                last_exc = requests.RequestException(f"Invalid response body ({reason}): {url}", response=resp)
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                 continue
@@ -46,3 +56,11 @@ def get_with_retry(url: str, params: dict | None = None, timeout: int = DEFAULT_
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)  # 1s, 2s, 4s, ...
     raise last_exc
+
+
+def _not_valid_json(text: str) -> bool:
+    try:
+        json.loads(text)
+        return False
+    except (json.JSONDecodeError, ValueError):
+        return True

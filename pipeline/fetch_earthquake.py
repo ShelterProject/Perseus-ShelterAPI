@@ -26,7 +26,7 @@ def fetch_zone_events(zone: dict, start_date: str, end_date: str) -> list[dict]:
         "maxlongitude": zone["max_lon"],
         "minmagnitude": MIN_MAGNITUDE,
     }
-    resp = get_with_retry(USGS_URL, params=params)
+    resp = get_with_retry(USGS_URL, params=params, expect_json=True)
     return resp.json().get("features", [])
 
 

@@ -31,7 +31,7 @@ def identify(layer_name: str, lat: float, lon: float) -> float | None:
         "returnGeometry": "false",
         "f": "json",
     }
-    resp = get_with_retry(IDENTIFY_URL_TMPL.format(layer=layer_name), params=params)
+    resp = get_with_retry(IDENTIFY_URL_TMPL.format(layer=layer_name), params=params, expect_json=True)
     value = resp.json().get("value")
     if value is None or value == "NoData":
         return None
