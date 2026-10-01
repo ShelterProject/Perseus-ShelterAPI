@@ -5,52 +5,116 @@ on:
     - cron: "0 0 1 * *"   # tanggal 1 tiap bulan, 00:00 UTC
   workflow_dispatch: {}     # buat trigger manual pas testing
 
+env:
+  PG_HOST: ${{ secrets.PG_HOST }}
+  PG_PORT: ${{ secrets.PG_PORT }}
+  PG_USER: ${{ secrets.PG_USER }}
+  PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
+  PG_DATABASE: ${{ secrets.PG_DATABASE }}
+  PG_CA_CERT: ${{ secrets.PG_CA_CERT }}
+  FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+
 jobs:
-  run-pipeline:
+  # 1) Wajib duluan -- semua job lain butuh tabel regions/seismic_zones terisi.
+  seed:
+    name: "1. Seed wilayah & zona seismik"
     runs-on: ubuntu-latest
-    timeout-minutes: 300
-    env:
-      PG_HOST: ${{ secrets.PG_HOST }}
-      PG_PORT: ${{ secrets.PG_PORT }}
-      PG_USER: ${{ secrets.PG_USER }}
-      PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
-      PG_DATABASE: ${{ secrets.PG_DATABASE }}
-      PG_CA_CERT: ${{ secrets.PG_CA_CERT }}
-      FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r pipeline/requirements.txt
-
-      - name: Seed wilayah & zona seismik (idempotent)
-        working-directory: pipeline
+      - run: pip install -r pipeline/requirements.txt
+      - working-directory: pipeline
         run: python seed_regions.py
 
-      - name: Fetch cuaca (Open-Meteo)
-        working-directory: pipeline
+  # 2-3-4) Independen satu sama lain -- jalan PARALEL, jadi fetch cuaca yang
+  # lambat gak nge-block fetch gempa/titik panas buat mulai.
+  fetch-weather:
+    name: "2. Fetch cuaca (Open-Meteo)"
+    needs: seed
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r pipeline/requirements.txt
+      - working-directory: pipeline
         run: python fetch_weather.py
 
-      - name: Fetch gempa (USGS)
-        working-directory: pipeline
+  fetch-earthquake:
+    name: "3. Fetch gempa (USGS)"
+    needs: seed
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r pipeline/requirements.txt
+      - working-directory: pipeline
         run: python fetch_earthquake.py
 
-      - name: Fetch titik panas (NASA FIRMS)
-        working-directory: pipeline
+  fetch-hotspots:
+    name: "4. Fetch titik panas (NASA FIRMS)"
+    needs: seed
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r pipeline/requirements.txt
+      - working-directory: pipeline
         run: python fetch_hotspots.py
 
-      - name: Train & forecast cuaca (SARIMAX)
-        working-directory: pipeline
+  # 5-6) Masing-masing cuma butuh fetch sumbernya sendiri -- juga paralel
+  # satu sama lain.
+  train-weather:
+    name: "5. Train & forecast cuaca (SARIMAX)"
+    needs: fetch-weather
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r pipeline/requirements.txt
+      - working-directory: pipeline
         run: python train_weather.py
 
-      - name: Train & forecast gempa (SARIMAX)
-        working-directory: pipeline
+  train-earthquake:
+    name: "6. Train & forecast gempa (SARIMAX)"
+    needs: fetch-earthquake
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r pipeline/requirements.txt
+      - working-directory: pipeline
         run: python train_earthquake.py
 
-      - name: Train & forecast karhutla (Decision Tree)
-        working-directory: pipeline
+  # 7) Butuh hasil cuaca (buat fitur) DAN histori titik panas (buat target),
+  # jadi nunggu dua-duanya selesai.
+  train-forest-fire:
+    name: "7. Train & forecast karhutla (Decision Tree)"
+    needs: [train-weather, fetch-hotspots]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r pipeline/requirements.txt
+      - working-directory: pipeline
         run: python train_forest_fire.py
