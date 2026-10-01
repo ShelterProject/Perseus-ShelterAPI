@@ -118,6 +118,7 @@ def main():
 
         if fetched_count % BATCH_SIZE == 0:
             print(f"Sudah {fetched_count} request ke Open-Meteo, cooldown {COOLDOWN_SECONDS}s ...")
+            sys.stdout.flush()
             time.sleep(COOLDOWN_SECONDS)
         else:
             time.sleep(0.2)
