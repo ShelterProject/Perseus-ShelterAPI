@@ -1,4 +1,4 @@
-"""Tipis wrapper di atas koneksi PostgreSQL (Aiven), gantiin lib/d1.py.
+"""Tipis wrapper di atas koneksi PostgreSQL (Aiven).
 
 Kredensial (PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE) dan
 sertifikat CA (PG_CA_CERT -- isi file .pem lengkap, bukan path) semuanya

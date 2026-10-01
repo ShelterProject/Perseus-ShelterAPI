@@ -64,9 +64,13 @@ Repo ini **public** — tidak ada credential yang boleh di-hardcode.
   certificate") disimpan utuh sebagai secret `PG_CA_CERT` (multi-baris,
   paste apa adanya termasuk baris `-----BEGIN CERTIFICATE-----`).
 
-Daftar secret yang dibutuhkan:
+Daftar secret yang dibutuhkan sekarang:
 `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `PG_CA_CERT`,
-`FIRMS_MAP_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `HYPERDRIVE_ID`.
+`FIRMS_MAP_KEY`.
+
+(`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `HYPERDRIVE_ID` dibutuhkan
+lagi nanti pas Worker/Hyperdrive disambung ulang -- lihat bagian "Belum
+dikerjakan" di bawah.)
 
 ## Setup (sekali di awal)
 
@@ -75,35 +79,18 @@ Daftar secret yang dibutuhkan:
    dari tab Overview-nya.
 2. Set 6 secret Postgres di atas (`PG_HOST` s/d `PG_CA_CERT`) + `FIRMS_MAP_KEY`
    di GitHub (Settings → Secrets and variables → Actions).
-3. Terapkan skema & isi data referensi wilayah — trigger manual dari tab
-   Actions: **"Deploy Worker"** dulu gak perlu, jalankan langsung
-   **"Monthly prediction pipeline"** (langkah pertamanya `seed_regions.py`
-   otomatis isi 515 kabupaten/kota + zona seismik; tabelnya sendiri baru
-   ada setelah `db/schema.sql` diterapkan lewat langkah 5 di bawah, jadi
-   urutan yang benar: langkah 4-5 dulu, baru pipeline).
-4. Buat Hyperdrive (connection pooler Workers ↔ Postgres):
-   ```bash
-   cd worker && npx wrangler login
-   npx wrangler hyperdrive create perseus-shelter-hyperdrive \
-     --connection-string="postgres://USER:PASSWORD@HOST:PORT/DATABASE?sslmode=require"
-   ```
-   Copy `id` dari output-nya ke secret GitHub `HYPERDRIVE_ID`, plus
-   `CLOUDFLARE_ACCOUNT_ID` & `CLOUDFLARE_API_TOKEN` (permission **Workers
-   Scripts: Edit**).
-5. Push ke `main` (atau trigger manual tab Actions → **"Deploy Worker"**) —
-   workflow ini menerapkan `db/schema.sql` ke Postgres via `psql`, generate
-   `worker/wrangler.toml` dari template (isi Hyperdrive ID dari secret),
-   lalu `wrangler deploy`.
-6. **Kalau sebelumnya sempat pakai D1** dan ada data lama yang mau
-   diselamatkan: trigger workflow **"Migrate D1 to Postgres (one-time)"**
-   sebelum lanjut ke langkah 7 (butuh secret D1 lama: `D1_DATABASE_ID` dkk,
-   masih tersimpan kalau belum dihapus).
-7. Trigger manual **"Monthly prediction pipeline"** dari tab Actions.
+3. Trigger manual workflow **"Apply Postgres schema"** dari tab Actions --
+   ini menerapkan `db/schema.sql` ke database Aiven kamu.
+4. Trigger manual **"Monthly prediction pipeline"** dari tab Actions --
+   langkah pertamanya (`seed_regions.py`) otomatis isi 515 kabupaten/kota +
+   zona seismik, lalu lanjut fetch & training.
 
-Setelah itu, `monthly-pipeline.yml` jalan otomatis tiap tanggal 1, dan
-`deploy-worker.yml` jalan otomatis tiap ada perubahan di `worker/` atau
-`db/schema.sql`. Untuk dev lokal: copy `worker/wrangler.toml.example` jadi
-`worker/wrangler.toml` (gitignored) dan isi Hyperdrive ID manual.
+Setelah itu, `monthly-pipeline.yml` jalan otomatis tiap tanggal 1, dan kalau
+gagal di tengah jalan (rate limit dari sumber data eksternal, wajar pas
+bootstrap awal narik 514 region sekaligus), `auto-retry-pipeline.yml`
+otomatis trigger ulang -- gak perlu diklik manual. Pastikan **Settings →
+Actions → General → Workflow permissions** di-set ke "Read and write
+permissions" biar auto-retry ini bisa jalan.
 
 ## Menjalankan pipeline manual (lokal)
 
@@ -133,9 +120,13 @@ kepake sendirinya.
 
 ## Status
 
-Skema Postgres, seluruh sumber data, script `pipeline/` (fetch incremental
-+ training, dengan auto-retry di CI), script migrasi dari D1, dan
-`worker/` (API lewat Hyperdrive, untuk sementara belum di-deploy otomatis
--- lihat `deploy-worker.yml`) sudah ada. Belum dikerjakan: langkah
-"Notified" (push notification FCM saat ada prediksi ekstrem), setup
-Hyperdrive yang mulus (CA cert), dan deploy end-to-end pertama.
+Skema Postgres, seluruh sumber data, dan script `pipeline/` (fetch
+incremental + training, dengan auto-retry di CI) sudah jalan. Kode
+`worker/` (API lewat Hyperdrive) sudah ditulis tapi **belum di-deploy**
+-- `deploy-worker.yml` untuk sementara cuma nerapin `db/schema.sql`, gak
+nyentuh Hyperdrive/Worker, karena setup CA certificate-nya lewat
+Hyperdrive belum ketemu jalan yang mulus (gak ada form upload CA di
+dashboard, dan CLI butuh `wrangler login`/API token yang belum dibereskan).
+
+Belum dikerjakan: sambung lagi Hyperdrive + deploy Worker, langkah
+"Notified" (push notification FCM saat ada prediksi ekstrem).
