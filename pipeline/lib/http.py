@@ -40,7 +40,8 @@ def get_with_retry(url: str, params: dict | None = None, timeout: int = DEFAULT_
     """
     last_exc = None
     for attempt in range(max_retries):
-        print(f"[{attempt + 1}/{max_retries}] GET {url.split('?')[0]}")
+        params_str = ", ".join(f"{k}={v}" for k, v in (params or {}).items())
+        print(f"[{attempt + 1}/{max_retries}] GET {url.split('?')[0]} -- params: {{{params_str}}}")
         sys.stdout.flush()
         try:
             resp = requests.get(url, params=params, timeout=timeout)
