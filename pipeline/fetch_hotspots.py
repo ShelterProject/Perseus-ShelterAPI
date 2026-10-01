@@ -105,6 +105,13 @@ def main():
                 fetched_at,
             ))
 
+        # FIRMS kadang ngasih >1 baris dengan (region_id, acq_date, lat, lon)
+        # identik (deteksi dobel dari satelit/pass berbeda) -- Postgres gak
+        # bisa ON CONFLICT DO UPDATE 2x ke baris yang sama dalam 1 statement,
+        # jadi di-dedup dulu (ambil yang terakhir) sebelum insert.
+        deduped = {row[:4]: row for row in rows}
+        rows = list(deduped.values())
+
         n = bulk_insert(
             "raw_hotspots",
             ["region_id", "acq_date", "lat", "lon", "brightness", "confidence", "frp", "fetched_at"],
