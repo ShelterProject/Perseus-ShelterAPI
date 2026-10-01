@@ -89,6 +89,7 @@ def main():
 
     total = 0
     skipped = 0
+    failed = 0
     fetched_count = 0
     for idx, region in enumerate(regions, 1):
         last_date = latest_per_region.get(region["id"])
@@ -103,7 +104,18 @@ def main():
             skipped += 1
             continue
 
-        rows = fetch_region_weather(region, start.isoformat(), end.isoformat())
+        try:
+            rows = fetch_region_weather(region, start.isoformat(), end.isoformat())
+        except Exception as e:
+            # Satu region gagal total (udah di-retry habis di get_with_retry)
+            # gak boleh bikin 513 region lain ikut gagal -- skip, lanjut.
+            # Incremental fetch bulan depan bakal nyoba region ini lagi
+            # otomatis (belum ada data baru buat dia, jadi masih "kurang up-to-date").
+            print(f"[{idx}/{len(regions)}] region_id={region['id']}: GAGAL TOTAL ({e}), di-skip")
+            failed += 1
+            sys.stdout.flush()
+            continue
+
         n = bulk_insert(
             "raw_weather",
             ["region_id", "date", "temp_min", "temp_max", "temp_mean",
@@ -123,7 +135,11 @@ def main():
         else:
             time.sleep(0.2)
 
-    print(f"Selesai. Total baris raw_weather: {total} ({skipped} region sudah up-to-date, di-skip)")
+    print(f"Selesai. Total baris raw_weather: {total} "
+          f"({skipped} region sudah up-to-date, {failed} region gagal total, keduanya di-skip)")
+    if failed:
+        print(f"PERHATIAN: {failed} region gagal total -- cek log di atas, kemungkinan perlu dicek manual "
+              f"kalau terus gagal tiap run (bukan cuma rate limit sementara).")
 
 
 if __name__ == "__main__":
