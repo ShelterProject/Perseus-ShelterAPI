@@ -15,6 +15,22 @@ import psycopg2.extras
 _ca_file_path: str | None = None
 
 
+def _to_py(value):
+    """Konversi scalar numpy (float64, int64, bool_, dll -- hasil umum dari
+    pandas/statsmodels/sklearn di train_*.py) ke tipe Python native.
+
+    psycopg2 gagal adapt numpy.float64 dkk ke SQL (khususnya di NumPy 2.x,
+    repr()-nya berubah jadi "np.float64(1.23)" alih-alih "1.23", bikin SQL
+    rusak). `.item()` bawaan numpy convert scalar ke tipe Python biasa --
+    dipakai lewat duck-typing (hasattr) biar lib/pg.py gak perlu import
+    numpy sama sekali (ini layer DB generik, bukan khusus ML)."""
+    if value is None:
+        return None
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
 def _ca_cert_path() -> str:
     global _ca_file_path
     if _ca_file_path:
@@ -42,7 +58,7 @@ def execute(sql: str, params: tuple | None = None):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(sql, params)
+            cur.execute(sql, [_to_py(p) for p in params] if params else params)
         conn.commit()
     finally:
         conn.close()
@@ -52,7 +68,7 @@ def fetch_all(sql: str, params: tuple | None = None) -> list[dict]:
     conn = get_connection()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, params)
+            cur.execute(sql, [_to_py(p) for p in params] if params else params)
             return [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
@@ -93,7 +109,7 @@ def bulk_insert(table: str, columns: list[str], rows: list[tuple],
     try:
         with conn.cursor() as cur:
             for i in range(0, len(rows), chunk_size):
-                chunk = rows[i:i + chunk_size]
+                chunk = [tuple(_to_py(v) for v in row) for row in rows[i:i + chunk_size]]
                 psycopg2.extras.execute_values(cur, sql, chunk, page_size=len(chunk))
                 written += len(chunk)
         conn.commit()
