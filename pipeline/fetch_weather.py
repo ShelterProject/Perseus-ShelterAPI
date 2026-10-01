@@ -11,6 +11,7 @@ from statistics import mean
 
 from lib.pg import bulk_insert, fetch_all
 from lib.http import get_with_retry
+from lib.dates import bootstrap_start_date
 
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 DAILY_VARS = "temperature_2m_min,temperature_2m_max,temperature_2m_mean,precipitation_sum,sunshine_duration,wind_speed_10m_max"
@@ -82,7 +83,7 @@ def main():
     }
 
     end = date.today()
-    bootstrap_start = end - timedelta(days=5 * 365)
+    bootstrap_start = bootstrap_start_date(end)
 
     BATCH_SIZE = 50
     COOLDOWN_SECONDS = 300  # Open-Meteo rate-limit-nya konsisten muncul tiap ~50 request

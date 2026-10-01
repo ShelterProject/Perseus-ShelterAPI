@@ -18,6 +18,7 @@ from datetime import date, timedelta
 from lib.pg import bulk_insert, fetch_all
 from lib.geo import nearest
 from lib.http import get_with_retry
+from lib.dates import bootstrap_start_date
 
 FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 SOURCE = "VIIRS_SNPP_SP"
@@ -67,7 +68,7 @@ def main():
         last_date = date.fromisoformat(last_date)
 
     end = date.today()
-    start = last_date + timedelta(days=1) if last_date else end - timedelta(days=5 * 365)
+    start = last_date + timedelta(days=1) if last_date else bootstrap_start_date(end)
     fetched_at = end.isoformat()
 
     if start > end:

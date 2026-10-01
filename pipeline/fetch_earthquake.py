@@ -10,6 +10,7 @@ from datetime import date, timedelta
 
 from lib.pg import bulk_insert, fetch_all
 from lib.http import get_with_retry
+from lib.dates import bootstrap_start_date
 
 USGS_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 MIN_MAGNITUDE = 1.0
@@ -46,7 +47,7 @@ def main():
     }
 
     end = date.today()
-    bootstrap_start = end - timedelta(days=5 * 365)
+    bootstrap_start = bootstrap_start_date(end)
     fetched_at = end.isoformat()
 
     total = 0
