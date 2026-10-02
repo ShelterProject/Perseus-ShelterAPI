@@ -175,6 +175,13 @@ export default {
         default:
           return jsonResponse({ error: "Not found" }, 404);
       }
+    } catch (e) {
+      // SEMENTARA: tampilin detail error di response langsung (bukan cuma
+      // di Workers Logs) buat debugging awal, karena dashboard logs susah
+      // diakses. Ini kebuka ke publik, jadi WAJIB dicabut lagi begitu
+      // Worker-nya kekonfirmasi jalan normal -- jangan dibiarkan di prod.
+      const err = e as Error;
+      return jsonResponse({ error: "Internal error", message: err.message, stack: err.stack }, 500);
     } finally {
       // Gak ada Hyperdrive yang pool koneksi buat kita -- tutup eksplisit
       // tiap request selesai, biar gak numpuk koneksi ke Postgres.
