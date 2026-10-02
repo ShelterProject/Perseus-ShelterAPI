@@ -2,8 +2,8 @@
 //
 // Satu-satunya server yang dikenal Mobile App. Semua sumber data eksternal
 // (Open-Meteo, USGS, FIRMS, InaRISK) cuma dipanggil oleh pipeline Python di
-// GitHub Actions -- Worker ini murni baca dari Postgres (lewat Hyperdrive,
-// Workers gak bisa konek TCP Postgres langsung).
+// GitHub Actions -- Worker ini murni baca dari Postgres, konek TCP
+// langsung (nodejs_compat) persis kayak pipeline Python, TANPA Hyperdrive.
 //
 // Endpoint:
 //   GET /predictions/weather?lat=&lon=&scope=city|province&radius_km=
@@ -19,7 +19,24 @@ import postgres from "postgres";
 import { Region, nearestRegion, regionsWithinRadius } from "./geo";
 
 export interface Env {
-  HYPERDRIVE: Hyperdrive;
+  PG_HOST: string;
+  PG_PORT: string;
+  PG_USER: string;
+  PG_PASSWORD: string;
+  PG_DATABASE: string;
+  PG_CA_CERT: string;
+}
+
+function connect(env: Env): postgres.Sql {
+  return postgres({
+    host: env.PG_HOST,
+    port: Number(env.PG_PORT),
+    username: env.PG_USER,
+    password: env.PG_PASSWORD,
+    database: env.PG_DATABASE,
+    ssl: { ca: env.PG_CA_CERT }, // sama kayak lib/pg.py: verify-ca pakai CA Aiven, bukan sslmode=require polos
+    max: 5,
+  });
 }
 
 // Whitelist tabel yang boleh di-query lewat handlePredictionQuery -- nama
@@ -141,10 +158,7 @@ export default {
       return jsonResponse({ error: "Method not allowed" }, 405);
     }
 
-    const sql = postgres(env.HYPERDRIVE.connectionString, {
-      max: 5,
-      fetch_types: false, // Hyperdrive gak dukung custom type introspection
-    });
+    const sql = connect(env);
 
     try {
       switch (url.pathname) {
@@ -162,8 +176,8 @@ export default {
           return jsonResponse({ error: "Not found" }, 404);
       }
     } finally {
-      // Hyperdrive yang pegang pooling beneran; ctx.waitUntil bukan wajib
-      // di sini karena request sudah selesai diproses sebelum sql ditutup.
+      // Gak ada Hyperdrive yang pool koneksi buat kita -- tutup eksplisit
+      // tiap request selesai, biar gak numpuk koneksi ke Postgres.
       await sql.end({ timeout: 0 });
     }
   },

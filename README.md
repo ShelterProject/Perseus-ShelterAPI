@@ -26,7 +26,7 @@ GitHub Actions (bulanan)
   -> tulis raw data ke PostgreSQL (Aiven)
   -> jalankan SARIMAX / Decision Tree
   -> tulis hasil prediksi ke PostgreSQL
-Cloudflare Workers API (lewat Hyperdrive)
+Cloudflare Workers API (TCP langsung ke Postgres, tanpa Hyperdrive)
   -> baca dari PostgreSQL, expose endpoint ke Mobile App
 Mobile App
   -> resolve GPS user -> provinsi/kabupaten terdekat -> tampilkan prediksi
@@ -64,23 +64,23 @@ Repo ini **public** — tidak ada credential yang boleh di-hardcode.
   certificate") disimpan utuh sebagai secret `PG_CA_CERT` (multi-baris,
   paste apa adanya termasuk baris `-----BEGIN CERTIFICATE-----`).
 
-Daftar secret yang dibutuhkan sekarang:
+Daftar secret yang dibutuhkan:
 `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `PG_CA_CERT`,
-`FIRMS_MAP_KEY`.
-
-(`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `HYPERDRIVE_ID` dibutuhkan
-lagi nanti pas Worker/Hyperdrive disambung ulang -- lihat bagian "Belum
-dikerjakan" di bawah.)
+`FIRMS_MAP_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (permission
+**Workers Scripts: Edit**). Worker-nya konek Postgres TCP langsung (bukan
+lewat Hyperdrive), kredensialnya pakai ulang `PG_*` yang sama lewat Worker
+Secret (`wrangler secret put`, dilakukan otomatis di `deploy-worker.yml`) --
+gak ada `HYPERDRIVE_ID` atau kredensial terpisah yang perlu dibuat.
 
 ## Setup (sekali di awal)
 
 1. Buat service PostgreSQL di [Aiven](https://aiven.io) (tier Free), copy
    `Host`, `Port`, `User`, `Password`, `Database name`, dan `CA certificate`
    dari tab Overview-nya.
-2. Set 6 secret Postgres di atas (`PG_HOST` s/d `PG_CA_CERT`) + `FIRMS_MAP_KEY`
-   di GitHub (Settings → Secrets and variables → Actions).
-3. Trigger manual workflow **"Apply Postgres schema"** dari tab Actions --
-   ini menerapkan `db/schema.sql` ke database Aiven kamu.
+2. Set semua secret di atas di GitHub (Settings → Secrets and variables → Actions).
+3. Trigger manual workflow **"Deploy Worker"** dari tab Actions -- ini
+   menerapkan `db/schema.sql` ke Postgres, deploy Worker-nya, lalu set
+   kredensial Postgres sebagai Worker Secret.
 4. Trigger manual **"Monthly prediction pipeline"** dari tab Actions --
    langkah pertamanya (`seed_regions.py`) otomatis isi 514 kabupaten/kota +
    zona seismik, lalu lanjut fetch & training.
@@ -120,13 +120,9 @@ kepake sendirinya.
 
 ## Status
 
-Skema Postgres, seluruh sumber data, dan script `pipeline/` (fetch
-incremental + training, dengan auto-retry di CI) sudah jalan. Kode
-`worker/` (API lewat Hyperdrive) sudah ditulis tapi **belum di-deploy**
--- `deploy-worker.yml` untuk sementara cuma nerapin `db/schema.sql`, gak
-nyentuh Hyperdrive/Worker, karena setup CA certificate-nya lewat
-Hyperdrive belum ketemu jalan yang mulus (gak ada form upload CA di
-dashboard, dan CLI butuh `wrangler login`/API token yang belum dibereskan).
+Skema Postgres, seluruh sumber data, script `pipeline/` (fetch incremental
++ training, dengan auto-retry di CI), dan `worker/` (API, konek Postgres
+TCP langsung tanpa Hyperdrive) sudah siap di-deploy lewat `deploy-worker.yml`.
 
-Belum dikerjakan: sambung lagi Hyperdrive + deploy Worker, langkah
-"Notified" (push notification FCM saat ada prediksi ekstrem).
+Belum dikerjakan: langkah "Notified" (push notification FCM saat ada
+prediksi ekstrem), dan menghubungkan Mobile App ke endpoint API ini.

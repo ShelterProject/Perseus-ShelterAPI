@@ -31,16 +31,24 @@ jobs:
           echo "${{ secrets.PG_CA_CERT }}" > /tmp/aiven-ca.pem
           psql "sslmode=verify-ca sslrootcert=/tmp/aiven-ca.pem" -f db/schema.sql
 
-      - name: Generate wrangler.toml dari template (isi Hyperdrive ID dari secret)
-        working-directory: worker
-        run: |
-          sed "s/__HYPERDRIVE_ID__/${{ secrets.HYPERDRIVE_ID }}/" \
-            wrangler.toml.example > wrangler.toml
-
       - name: Install dependencies
         working-directory: worker
         run: npm install
 
       - name: Deploy
         working-directory: worker
-        run: npx wrangler deploy
+        run: cp wrangler.toml.example wrangler.toml && npx wrangler deploy
+
+      # Worker gak konek lewat Hyperdrive -- kredensial Postgres (sama
+      # persis yang dipakai pipeline Python) disimpan sebagai Worker
+      # Secret, bukan di wrangler.toml. `wrangler secret put` idempotent,
+      # aman dipanggil ulang tiap deploy.
+      - name: Set Worker secrets (kredensial Postgres, sama kayak pipeline)
+        working-directory: worker
+        run: |
+          echo "${{ secrets.PG_HOST }}" | npx wrangler secret put PG_HOST
+          echo "${{ secrets.PG_PORT }}" | npx wrangler secret put PG_PORT
+          echo "${{ secrets.PG_USER }}" | npx wrangler secret put PG_USER
+          echo "${{ secrets.PG_PASSWORD }}" | npx wrangler secret put PG_PASSWORD
+          echo "${{ secrets.PG_DATABASE }}" | npx wrangler secret put PG_DATABASE
+          echo "${{ secrets.PG_CA_CERT }}" | npx wrangler secret put PG_CA_CERT

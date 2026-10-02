@@ -3,19 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Untuk dev lokal: copy file ini jadi `wrangler.toml` (sudah di-gitignore)
-# dan ganti id di bawah dengan Hyperdrive ID asli dari
-# `wrangler hyperdrive create ...`.
-#
-# Untuk deploy lewat GitHub Actions: JANGAN edit file ini. Workflow
-# `.github/workflows/deploy-worker.yml` men-generate `wrangler.toml` asli
-# dari template ini secara otomatis, mengisi id dari secret HYPERDRIVE_ID
-# -- jadi ID asli gak pernah ke-commit ke git.
-#
-# Workers gak bisa konek TCP Postgres langsung -- Hyperdrive yang jadi
-# connection pooler-nya. String koneksi asli (host/user/password/CA Aiven)
-# disimpan di sisi Hyperdrive sendiri (dibuat sekali lewat `wrangler
-# hyperdrive create`), bukan di file ini.
-[[hyperdrive]]
-binding = "HYPERDRIVE"
-id = "__HYPERDRIVE_ID__"
+# Koneksi Postgres TIDAK lewat Hyperdrive -- Workers mendukung TCP socket
+# langsung (nodejs_compat), jadi connect persis sama caranya kayak
+# pipeline Python (lib/pg.py): host/user/password/database/CA cert, semua
+# dari Worker Secrets (`wrangler secret put ...`), BUKAN dari file ini.
+# Lihat deploy-worker.yml -- secret-nya dipakai ulang dari GitHub Secrets
+# yang sama (PG_HOST dkk), gak ada kredensial baru yang perlu dibuat.
