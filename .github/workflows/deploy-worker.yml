@@ -1,64 +1,22 @@
-name: Deploy Worker
+name: Deploy Worker (deprecated)
+
+# DEPRECATED -- API-nya sudah pindah ke AWS Lambda (lihat deploy-api.yml
+# dan README bagian "Kenapa AWS Lambda, bukan Cloudflare Workers"). Dua
+# cara koneksi Worker ke Postgres (socket TCP mentah dan Hyperdrive)
+# sama-sama gak reliable di runtime isolate Cloudflare Workers.
+#
+# File ini & `worker/` ditinggalkan sebagai riwayat, bukan dihapus,
+# tapi gak lagi dipicu otomatis -- cuma bisa dijalankan manual lewat
+# workflow_dispatch kalau suatu saat perlu dicoba lagi.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "worker/**"
-      - "db/schema.sql"
   workflow_dispatch: {}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Terapkan skema ke Postgres (idempotent -- IF NOT EXISTS)
+      - name: Deprecated
         run: |
-          echo "${{ secrets.PG_CA_CERT }}" > /tmp/aiven-ca.pem
-          psql "sslmode=verify-ca sslrootcert=/tmp/aiven-ca.pem host=${{ secrets.PG_HOST }} port=${{ secrets.PG_PORT }} user=${{ secrets.PG_USER }} password=${{ secrets.PG_PASSWORD }} dbname=${{ secrets.PG_DATABASE }}" -f db/schema.sql
-
-      - name: Install dependencies
-        working-directory: worker
-        run: npm install
-
-      # Koneksi TCP langsung dari Worker (nodejs_compat) ke Aiven ternyata
-      # gak reliable -- TLS handshake-nya suka macet/retry-storm kena limit
-      # subrequest Workers. Hyperdrive adalah jalur yang didukung resmi
-      # Cloudflare buat kasus ini: Worker cuma bicara ke Hyperdrive (cepat,
-      # gak masuk hitungan subrequest kayak socket mentah), Hyperdrive yang
-      # urus koneksi+pool beneran ke Aiven. sslmode=require cukup di sini
-      # (gak perlu CA Aiven) karena yang connect ke Aiven adalah Hyperdrive,
-      # bukan runtime Worker yang socket TLS-nya rewel.
-      - name: Buat/refresh konfigurasi Hyperdrive
-        working-directory: worker
-        run: |
-          set -e
-          CONN="postgres://${{ secrets.PG_USER }}:${{ secrets.PG_PASSWORD }}@${{ secrets.PG_HOST }}:${{ secrets.PG_PORT }}/${{ secrets.PG_DATABASE }}?sslmode=require"
-          EXISTING_ID=$(npx wrangler hyperdrive list 2>/dev/null | grep -B2 'perseus-shelter-pg' | grep -oE '[a-f0-9]{32}' | head -1 || true)
-          if [ -n "$EXISTING_ID" ]; then
-            echo "Update Hyperdrive config yang sudah ada: $EXISTING_ID"
-            npx wrangler hyperdrive update "$EXISTING_ID" --connection-string="$CONN"
-            echo "HYPERDRIVE_ID=$EXISTING_ID" >> "$GITHUB_ENV"
-          else
-            echo "Buat Hyperdrive config baru"
-            OUTPUT=$(npx wrangler hyperdrive create perseus-shelter-pg --connection-string="$CONN")
-            echo "$OUTPUT"
-            NEW_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{32}' | head -1)
-            echo "HYPERDRIVE_ID=$NEW_ID" >> "$GITHUB_ENV"
-          fi
-
-      - name: Deploy
-        working-directory: worker
-        run: |
-          cp wrangler.toml.example wrangler.toml
-          sed -i "s/__HYPERDRIVE_ID__/${HYPERDRIVE_ID}/" wrangler.toml
-          npx wrangler deploy
+          echo "Workflow ini deprecated -- API sekarang di-deploy lewat deploy-api.yml (AWS Lambda)."
+          echo "Lihat README untuk alasannya."

@@ -11,9 +11,10 @@ cakupan (seluruh Indonesia, bukan hanya Sumatera Utara).
 ## Struktur
 
 ```
-.github/workflows/   Cron bulanan yang menjalankan pipeline/
+.github/workflows/   Cron bulanan yang menjalankan pipeline/, + deploy API
 pipeline/             Script Python: fetch data mentah + training
-worker/               Cloudflare Workers API (TypeScript) yang dibaca Mobile App
+api/                  AWS Lambda API (Node.js) yang dibaca Mobile App
+worker/               (deprecated, lihat "Kenapa AWS Lambda, bukan Cloudflare Workers")
 db/schema.sql         Skema PostgreSQL (Aiven)
 ```
 
@@ -26,8 +27,9 @@ GitHub Actions (bulanan)
   -> tulis raw data ke PostgreSQL (Aiven)
   -> jalankan SARIMAX / Decision Tree
   -> tulis hasil prediksi ke PostgreSQL
-Cloudflare Workers API (lewat Hyperdrive, bukan socket TCP mentah)
-  -> baca dari PostgreSQL, expose endpoint ke Mobile App
+AWS Lambda (Function URL, dicek header X-App-Key)
+  -> query Postgres LANGSUNG tiap request (gak ada cache, data selalu fresh)
+  -> expose endpoint ke Mobile App
 Mobile App
   -> resolve GPS user -> provinsi/kabupaten terdekat -> tampilkan prediksi
 ```
@@ -42,6 +44,24 @@ tahun untuk 514 kabupaten/kota. Postgres gak punya limit semacam itu, cuma
 dibatasi storage & koneksi. Aiven punya tier gratis permanen (1 CPU/1GB
 RAM/1GB storage) tanpa kartu kredit kadaluarsa kayak free-trial provider
 lain.
+
+## Kenapa AWS Lambda, bukan Cloudflare Workers
+
+`worker/` (Cloudflare Workers + TypeScript) adalah percobaan pertama buat
+API-nya, tapi dua pendekatan koneksi ke Postgres dari runtime Workers
+sama-sama gak reliable:
+
+- Socket TCP langsung (`nodejs_compat`) -- TLS handshake-nya retry-storm
+  kena limit "too many subrequests" Workers, atau kadang malah hang total
+  tanpa error sama sekali.
+- Hyperdrive -- secara arsitektur dirancang buat kasus ini, tapi tetap
+  diputuskan untuk tidak dipakai di proyek ini.
+
+Lambda jalan di runtime Node biasa (bukan isolate V8 kayak Workers), jadi
+koneksinya ke Aiven sama persis caranya kayak pipeline Python di GitHub
+Actions yang dari awal sudah terbukti jalan. `worker/` dan
+`deploy-worker.yml` ditinggalkan sebagai riwayat/dead code, bukan lagi
+yang di-deploy.
 
 ## Sumber data (bukan lagi BMKG Data Online / SiPongi manual)
 
@@ -66,23 +86,37 @@ Repo ini **public** — tidak ada credential yang boleh di-hardcode.
 
 Daftar secret yang dibutuhkan:
 `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `PG_CA_CERT`,
-`FIRMS_MAP_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (permission
-**Workers Scripts: Edit** + **Hyperdrive: Edit**). Worker-nya konek
-Postgres lewat Hyperdrive (bukan socket TCP mentah) -- konfigurasi
-Hyperdrive-nya (termasuk connection string ke Aiven) dibuat/di-refresh
-otomatis dari `PG_*` yang sama tiap `deploy-worker.yml` jalan, gak perlu
-dibuat manual lewat dashboard.
+`FIRMS_MAP_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `APP_KEY`.
+
+- `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`: dari IAM user yang kamu buat
+  sendiri sekali di awal (lihat Setup di bawah) -- scope-nya cuma boleh
+  Lambda + IAM role terbatas buat deploy, bukan full admin.
+- `APP_KEY`: satu string rahasia yang kamu generate sendiri (mis.
+  `openssl rand -hex 32`), ini "identifier" yang dicek API di header
+  `X-App-Key` -- request yang gak bawa/gak cocok langsung ditolak sebelum
+  nyentuh Postgres. Value yang sama ini juga yang ditanam di Mobile App.
 
 ## Setup (sekali di awal)
 
 1. Buat service PostgreSQL di [Aiven](https://aiven.io) (tier Free), copy
    `Host`, `Port`, `User`, `Password`, `Database name`, dan `CA certificate`
    dari tab Overview-nya.
-2. Set semua secret di atas di GitHub (Settings → Secrets and variables → Actions).
-3. Trigger manual workflow **"Deploy Worker"** dari tab Actions -- ini
-   menerapkan `db/schema.sql` ke Postgres, deploy Worker-nya, lalu set
-   kredensial Postgres sebagai Worker Secret.
-4. Trigger manual **"Monthly prediction pipeline"** dari tab Actions --
+2. Di AWS Console, buat satu IAM user khusus deploy (misal
+   `perseus-shelter-ci`) dengan policy terbatas: `lambda:*` di resource
+   function `perseus-shelter-api`, plus `iam:CreateRole`,
+   `iam:GetRole`, `iam:AttachRolePolicy`, `iam:PassRole` (dibatasi ke role
+   `perseus-shelter-lambda-role`) -- ini dipakai `deploy-api.yml` buat
+   bikin/update function-nya sendiri secara otomatis, kamu gak perlu
+   pernah buka AWS Console lagi sesudahnya. Generate access key-nya.
+3. Generate `APP_KEY` (`openssl rand -hex 32` atau sejenisnya).
+4. Set semua secret di atas di GitHub (Settings → Secrets and variables → Actions).
+5. Trigger manual workflow **"Deploy API (AWS Lambda)"** dari tab Actions --
+   ini menerapkan `db/schema.sql` ke Postgres, bikin IAM role eksekusi,
+   deploy function-nya, pasang Reserved Concurrency (biar gak pernah lebih
+   banyak koneksi bersamaan ke Postgres daripada slot yang Aiven kasih,
+   dan jadi pengaman utama dari DDoS/flood request), dan expose Function
+   URL-nya.
+6. Trigger manual **"Monthly prediction pipeline"** dari tab Actions --
    langkah pertamanya (`seed_regions.py`) otomatis isi 514 kabupaten/kota +
    zona seismik, lalu lanjut fetch & training.
 
@@ -122,8 +156,9 @@ kepake sendirinya.
 ## Status
 
 Skema Postgres, seluruh sumber data, script `pipeline/` (fetch incremental
-+ training, dengan auto-retry di CI), dan `worker/` (API, konek Postgres
-lewat Hyperdrive) sudah siap di-deploy lewat `deploy-worker.yml`.
++ training, dengan auto-retry di CI), dan `api/` (Lambda, konek Postgres
+langsung + dibatasi satu `APP_KEY`) sudah siap di-deploy lewat
+`deploy-api.yml`.
 
 Belum dikerjakan: langkah "Notified" (push notification FCM saat ada
 prediksi ekstrem), dan menghubungkan Mobile App ke endpoint API ini.

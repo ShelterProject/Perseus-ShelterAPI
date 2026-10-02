@@ -1,0 +1,110 @@
+name: Deploy API (AWS Lambda)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "db/schema.sql"
+  workflow_dispatch: {}
+
+# Pindah dari Cloudflare Workers ke AWS Lambda -- socket TCP mentah
+# (nodejs_compat) maupun Hyperdrive dari runtime isolate Workers ke Aiven
+# gak reliable (macet/retry-storm). Lambda jalan di runtime Node biasa,
+# koneksi Postgres-nya sama persis caranya kayak pipeline Python di
+# GitHub Actions yang sudah terbukti jalan ke Aiven.
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_DEFAULT_REGION: ap-southeast-1
+      FUNCTION_NAME: perseus-shelter-api
+      ROLE_NAME: perseus-shelter-lambda-role
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Terapkan skema ke Postgres (idempotent -- IF NOT EXISTS)
+        run: |
+          echo "${{ secrets.PG_CA_CERT }}" > /tmp/aiven-ca.pem
+          psql "sslmode=verify-ca sslrootcert=/tmp/aiven-ca.pem host=${{ secrets.PG_HOST }} port=${{ secrets.PG_PORT }} user=${{ secrets.PG_USER }} password=${{ secrets.PG_PASSWORD }} dbname=${{ secrets.PG_DATABASE }}" -f db/schema.sql
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-1
+
+      - name: Install dependencies
+        working-directory: api
+        run: npm install --omit=dev
+
+      - name: Bundle function.zip
+        working-directory: api
+        run: zip -r ../function.zip . -x "*.git*"
+
+      # Role eksekusi Lambda (sekali dibuat, idempotent tiap deploy) --
+      # cuma butuh permission tulis ke CloudWatch Logs, gak ada akses AWS
+      # lain yang diberikan ke fungsi ini.
+      - name: Pastikan IAM role eksekusi ada
+        run: |
+          set -e
+          if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+            echo "Membuat role $ROLE_NAME..."
+            aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{"Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+            }'
+            aws iam attach-role-policy --role-name "$ROLE_NAME" \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            echo "Menunggu propagasi IAM role..."
+            sleep 10
+          fi
+          ROLE_ARN=$(aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text)
+          echo "ROLE_ARN=$ROLE_ARN" >> "$GITHUB_ENV"
+
+      - name: Deploy atau update function Lambda
+        run: |
+          set -e
+          ENV_VARS="Variables={PG_HOST=${{ secrets.PG_HOST }},PG_PORT=${{ secrets.PG_PORT }},PG_USER=${{ secrets.PG_USER }},PG_PASSWORD=${{ secrets.PG_PASSWORD }},PG_DATABASE=${{ secrets.PG_DATABASE }},PG_CA_CERT=${{ secrets.PG_CA_CERT }},APP_KEY=${{ secrets.APP_KEY }}}"
+
+          if aws lambda get-function --function-name "$FUNCTION_NAME" >/dev/null 2>&1; then
+            echo "Update function yang sudah ada"
+            aws lambda update-function-code --function-name "$FUNCTION_NAME" --zip-file fileb://function.zip
+            aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+            aws lambda update-function-configuration --function-name "$FUNCTION_NAME" \
+              --timeout 15 --memory-size 256 --environment "$ENV_VARS"
+          else
+            echo "Buat function baru"
+            aws lambda create-function --function-name "$FUNCTION_NAME" \
+              --runtime nodejs20.x --handler index.handler --role "$ROLE_ARN" \
+              --zip-file fileb://function.zip --timeout 15 --memory-size 256 \
+              --environment "$ENV_VARS"
+            aws lambda wait function-active --function-name "$FUNCTION_NAME"
+          fi
+
+          # Reserved concurrency -- batas KERAS berapa banyak eksekusi boleh
+          # jalan bersamaan. Di-set DI BAWAH limit koneksi bersamaan Aiven
+          # (free tier, ~20) supaya gak mungkin ada lebih banyak Lambda yang
+          # query Postgres bersamaan daripada slot koneksi yang tersedia --
+          # kelebihannya di-throttle gratis oleh Lambda sendiri (gak masuk
+          # hitungan invocation/billing), ini juga jadi pengaman utama
+          # kalau kena flood/DDoS request.
+          aws lambda put-function-concurrency --function-name "$FUNCTION_NAME" \
+            --reserved-concurrent-executions 10
+
+      - name: Pastikan Function URL ada & public-invokable
+        run: |
+          set -e
+          if ! aws lambda get-function-url-config --function-name "$FUNCTION_NAME" >/dev/null 2>&1; then
+            aws lambda create-function-url-config --function-name "$FUNCTION_NAME" --auth-type NONE
+            aws lambda add-permission --function-name "$FUNCTION_NAME" \
+              --statement-id PublicInvokeFunctionUrl --action lambda:InvokeFunctionUrl \
+              --principal "*" --function-url-auth-type NONE
+          fi
+          URL=$(aws lambda get-function-url-config --function-name "$FUNCTION_NAME" --query 'FunctionUrl' --output text)
+          echo "Function URL: $URL"
