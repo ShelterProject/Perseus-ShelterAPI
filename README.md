@@ -88,35 +88,25 @@ Daftar secret yang dibutuhkan:
 `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `PG_CA_CERT`,
 `FIRMS_MAP_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `APP_KEY`.
 
-- `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`: dari IAM user yang kamu buat
-  sendiri sekali di awal (lihat Setup di bawah) -- scope-nya cuma boleh
-  Lambda + IAM role terbatas buat deploy, bukan full admin.
-- `APP_KEY`: satu string rahasia yang kamu generate sendiri (mis.
-  `openssl rand -hex 32`), ini "identifier" yang dicek API di header
-  `X-App-Key` -- request yang gak bawa/gak cocok langsung ditolak sebelum
-  nyentuh Postgres. Value yang sama ini juga yang ditanam di Mobile App.
+- `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`: dari IAM user khusus deploy
+  (lihat panduan deploy API di bawah) -- scope-nya cuma boleh Lambda + IAM
+  role terbatas, bukan full admin.
+- `APP_KEY`: satu string rahasia (generate sendiri, mis. `openssl rand -hex
+  32`), ini "identifier" yang dicek API di header `X-App-Key` -- request
+  yang gak bawa/gak cocok langsung ditolak sebelum nyentuh Postgres. Value
+  yang sama ini juga yang ditanam di sisi Mobile App yang konsumsi API ini.
 
-## Setup (sekali di awal)
+## Setup database & pipeline (sekali di awal)
 
 1. Buat service PostgreSQL di [Aiven](https://aiven.io) (tier Free), copy
    `Host`, `Port`, `User`, `Password`, `Database name`, dan `CA certificate`
    dari tab Overview-nya.
-2. Di AWS Console, buat satu IAM user khusus deploy (misal
-   `perseus-shelter-ci`) dengan policy terbatas: `lambda:*` di resource
-   function `perseus-shelter-api`, plus `iam:CreateRole`,
-   `iam:GetRole`, `iam:AttachRolePolicy`, `iam:PassRole` (dibatasi ke role
-   `perseus-shelter-lambda-role`) -- ini dipakai `deploy-api.yml` buat
-   bikin/update function-nya sendiri secara otomatis, kamu gak perlu
-   pernah buka AWS Console lagi sesudahnya. Generate access key-nya.
-3. Generate `APP_KEY` (`openssl rand -hex 32` atau sejenisnya).
-4. Set semua secret di atas di GitHub (Settings → Secrets and variables → Actions).
-5. Trigger manual workflow **"Deploy API (AWS Lambda)"** dari tab Actions --
-   ini menerapkan `db/schema.sql` ke Postgres, bikin IAM role eksekusi,
-   deploy function-nya, pasang Reserved Concurrency (biar gak pernah lebih
-   banyak koneksi bersamaan ke Postgres daripada slot yang Aiven kasih,
-   dan jadi pengaman utama dari DDoS/flood request), dan expose Function
-   URL-nya.
-6. Trigger manual **"Monthly prediction pipeline"** dari tab Actions --
+2. Set secret `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`,
+   `PG_CA_CERT`, `FIRMS_MAP_KEY` di GitHub (Settings → Secrets and
+   variables → Actions).
+3. Ikuti panduan deploy API di bawah dulu (menerapkan `db/schema.sql` jadi
+   bagian dari workflow deploy-nya).
+4. Trigger manual **"Monthly prediction pipeline"** dari tab Actions --
    langkah pertamanya (`seed_regions.py`) otomatis isi 514 kabupaten/kota +
    zona seismik, lalu lanjut fetch & training.
 
@@ -126,6 +116,94 @@ bootstrap awal narik 514 region sekaligus), `auto-retry-pipeline.yml`
 otomatis trigger ulang -- gak perlu diklik manual. Pastikan **Settings →
 Actions → General → Workflow permissions** di-set ke "Read and write
 permissions" biar auto-retry ini bisa jalan.
+
+## Deploy API ke AWS Lambda
+
+API-nya (`api/index.mjs`) jalan sebagai AWS Lambda dengan **Function URL**
+(HTTPS endpoint langsung dari Lambda, tanpa API Gateway -- API Gateway
+cuma gratis 12 bulan, Lambda gratis permanen). Seluruh proses build & deploy
+diotomatisasi oleh `.github/workflows/deploy-api.yml`; satu-satunya langkah
+manual yang gak bisa diotomatisasi adalah menyiapkan kredensial AWS-nya,
+karena itu butuh akses yang belum ada di titik mana pun sebelumnya.
+
+### 1. Siapkan IAM user khusus deploy
+
+Di AWS Console (IAM → Users → Create user), buat satu user khusus (misal
+`perseus-shelter-ci`) dengan **custom policy** seminimal berikut (bukan
+policy bawaan `AdministratorAccess`):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "lambda:*",
+      "Resource": "arn:aws:lambda:*:*:function:perseus-shelter-api"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["iam:CreateRole", "iam:GetRole", "iam:AttachRolePolicy", "iam:PassRole"],
+      "Resource": "arn:aws:iam::*:role/perseus-shelter-lambda-role"
+    }
+  ]
+}
+```
+
+Generate access key buat user ini (Security credentials → Create access
+key → "Application running outside AWS" / CLI).
+
+### 2. Generate identifier akses API
+
+```bash
+openssl rand -hex 32
+```
+
+String ini dicek API di header `X-App-Key` pada setiap request -- siapa
+pun yang mengonsumsi API ini (misal aplikasi mobile) harus mengirim header
+ini dengan value yang sama. Request tanpa header ini ditolak sebelum API
+sempat menyentuh database.
+
+### 3. Set GitHub Secrets
+
+Di repo ini: Settings → Secrets and variables → Actions, tambahkan:
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (dari langkah 1), dan
+`APP_KEY` (dari langkah 2). Secret `PG_*` dari bagian setup database di
+atas dipakai ulang di sini, gak perlu dibuat dobel.
+
+### 4. Jalankan workflow deploy
+
+Trigger workflow **"Deploy API (AWS Lambda)"** dari tab Actions (manual,
+`workflow_dispatch`) -- workflow ini akan otomatis, setiap kali dijalankan:
+
+1. Menerapkan `db/schema.sql` ke Postgres (idempotent, aman diulang).
+2. Membuat IAM role eksekusi Lambda kalau belum ada (`perseus-shelter-lambda-role`,
+   cuma punya permission tulis CloudWatch Logs, gak ada akses AWS lain).
+3. Build & deploy function-nya (`aws lambda create-function` / `update-function-code`).
+4. Memasang **Reserved Concurrency = 10** -- batas keras berapa banyak
+   eksekusi Lambda yang boleh jalan bersamaan. Ini dipasang di bawah limit
+   koneksi bersamaan yang diberikan Aiven tier gratis (~20), supaya jumlah
+   koneksi ke Postgres gak pernah melebihi slot yang tersedia. Efek
+   sampingnya: ini juga jadi perlindungan dari traffic flood/DDoS, karena
+   kelebihan request di luar 10 itu langsung di-throttle oleh Lambda
+   sendiri (gratis, gak pernah ikut tereksekusi atau tertagih) sebelum
+   sempat menyentuh kode atau database.
+5. Membuat/mengaktifkan Function URL-nya dan menampilkan URL-nya di log
+   step terakhir.
+
+Push ke `main` yang mengubah isi folder `api/` atau `db/schema.sql` akan
+otomatis memicu ulang workflow ini.
+
+### Verifikasi
+
+```bash
+curl -H "X-App-Key: <APP_KEY yang di-generate di langkah 2>" \
+  "<Function URL>/predictions/weather?lat=-6.2&lon=106.8"
+```
+
+Request tanpa header `X-App-Key` yang benar akan mendapat `401`. Request
+ke path yang gak dikenal (lihat daftar endpoint di bagian "Alur data")
+akan mendapat `404`.
 
 ## Menjalankan pipeline manual (lokal)
 
