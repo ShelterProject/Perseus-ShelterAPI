@@ -14,11 +14,6 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      PGHOST: ${{ secrets.PG_HOST }}
-      PGPORT: ${{ secrets.PG_PORT }}
-      PGUSER: ${{ secrets.PG_USER }}
-      PGPASSWORD: ${{ secrets.PG_PASSWORD }}
-      PGDATABASE: ${{ secrets.PG_DATABASE }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,26 +24,41 @@ jobs:
       - name: Terapkan skema ke Postgres (idempotent -- IF NOT EXISTS)
         run: |
           echo "${{ secrets.PG_CA_CERT }}" > /tmp/aiven-ca.pem
-          psql "sslmode=verify-ca sslrootcert=/tmp/aiven-ca.pem" -f db/schema.sql
+          psql "sslmode=verify-ca sslrootcert=/tmp/aiven-ca.pem host=${{ secrets.PG_HOST }} port=${{ secrets.PG_PORT }} user=${{ secrets.PG_USER }} password=${{ secrets.PG_PASSWORD }} dbname=${{ secrets.PG_DATABASE }}" -f db/schema.sql
 
       - name: Install dependencies
         working-directory: worker
         run: npm install
 
-      - name: Deploy
-        working-directory: worker
-        run: cp wrangler.toml.example wrangler.toml && npx wrangler deploy
-
-      # Worker gak konek lewat Hyperdrive -- kredensial Postgres (sama
-      # persis yang dipakai pipeline Python) disimpan sebagai Worker
-      # Secret, bukan di wrangler.toml. `wrangler secret put` idempotent,
-      # aman dipanggil ulang tiap deploy.
-      - name: Set Worker secrets (kredensial Postgres, sama kayak pipeline)
+      # Koneksi TCP langsung dari Worker (nodejs_compat) ke Aiven ternyata
+      # gak reliable -- TLS handshake-nya suka macet/retry-storm kena limit
+      # subrequest Workers. Hyperdrive adalah jalur yang didukung resmi
+      # Cloudflare buat kasus ini: Worker cuma bicara ke Hyperdrive (cepat,
+      # gak masuk hitungan subrequest kayak socket mentah), Hyperdrive yang
+      # urus koneksi+pool beneran ke Aiven. sslmode=require cukup di sini
+      # (gak perlu CA Aiven) karena yang connect ke Aiven adalah Hyperdrive,
+      # bukan runtime Worker yang socket TLS-nya rewel.
+      - name: Buat/refresh konfigurasi Hyperdrive
         working-directory: worker
         run: |
-          echo "${{ secrets.PG_HOST }}" | npx wrangler secret put PG_HOST
-          echo "${{ secrets.PG_PORT }}" | npx wrangler secret put PG_PORT
-          echo "${{ secrets.PG_USER }}" | npx wrangler secret put PG_USER
-          echo "${{ secrets.PG_PASSWORD }}" | npx wrangler secret put PG_PASSWORD
-          echo "${{ secrets.PG_DATABASE }}" | npx wrangler secret put PG_DATABASE
-          echo "${{ secrets.PG_CA_CERT }}" | npx wrangler secret put PG_CA_CERT
+          set -e
+          CONN="postgres://${{ secrets.PG_USER }}:${{ secrets.PG_PASSWORD }}@${{ secrets.PG_HOST }}:${{ secrets.PG_PORT }}/${{ secrets.PG_DATABASE }}?sslmode=require"
+          EXISTING_ID=$(npx wrangler hyperdrive list 2>/dev/null | grep -B2 'perseus-shelter-pg' | grep -oE '[a-f0-9]{32}' | head -1 || true)
+          if [ -n "$EXISTING_ID" ]; then
+            echo "Update Hyperdrive config yang sudah ada: $EXISTING_ID"
+            npx wrangler hyperdrive update "$EXISTING_ID" --connection-string="$CONN"
+            echo "HYPERDRIVE_ID=$EXISTING_ID" >> "$GITHUB_ENV"
+          else
+            echo "Buat Hyperdrive config baru"
+            OUTPUT=$(npx wrangler hyperdrive create perseus-shelter-pg --connection-string="$CONN")
+            echo "$OUTPUT"
+            NEW_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{32}' | head -1)
+            echo "HYPERDRIVE_ID=$NEW_ID" >> "$GITHUB_ENV"
+          fi
+
+      - name: Deploy
+        working-directory: worker
+        run: |
+          cp wrangler.toml.example wrangler.toml
+          sed -i "s/__HYPERDRIVE_ID__/${HYPERDRIVE_ID}/" wrangler.toml
+          npx wrangler deploy

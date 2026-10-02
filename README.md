@@ -26,7 +26,7 @@ GitHub Actions (bulanan)
   -> tulis raw data ke PostgreSQL (Aiven)
   -> jalankan SARIMAX / Decision Tree
   -> tulis hasil prediksi ke PostgreSQL
-Cloudflare Workers API (TCP langsung ke Postgres, tanpa Hyperdrive)
+Cloudflare Workers API (lewat Hyperdrive, bukan socket TCP mentah)
   -> baca dari PostgreSQL, expose endpoint ke Mobile App
 Mobile App
   -> resolve GPS user -> provinsi/kabupaten terdekat -> tampilkan prediksi
@@ -67,10 +67,11 @@ Repo ini **public** — tidak ada credential yang boleh di-hardcode.
 Daftar secret yang dibutuhkan:
 `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `PG_CA_CERT`,
 `FIRMS_MAP_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (permission
-**Workers Scripts: Edit**). Worker-nya konek Postgres TCP langsung (bukan
-lewat Hyperdrive), kredensialnya pakai ulang `PG_*` yang sama lewat Worker
-Secret (`wrangler secret put`, dilakukan otomatis di `deploy-worker.yml`) --
-gak ada `HYPERDRIVE_ID` atau kredensial terpisah yang perlu dibuat.
+**Workers Scripts: Edit** + **Hyperdrive: Edit**). Worker-nya konek
+Postgres lewat Hyperdrive (bukan socket TCP mentah) -- konfigurasi
+Hyperdrive-nya (termasuk connection string ke Aiven) dibuat/di-refresh
+otomatis dari `PG_*` yang sama tiap `deploy-worker.yml` jalan, gak perlu
+dibuat manual lewat dashboard.
 
 ## Setup (sekali di awal)
 
@@ -122,7 +123,7 @@ kepake sendirinya.
 
 Skema Postgres, seluruh sumber data, script `pipeline/` (fetch incremental
 + training, dengan auto-retry di CI), dan `worker/` (API, konek Postgres
-TCP langsung tanpa Hyperdrive) sudah siap di-deploy lewat `deploy-worker.yml`.
+lewat Hyperdrive) sudah siap di-deploy lewat `deploy-worker.yml`.
 
 Belum dikerjakan: langkah "Notified" (push notification FCM saat ada
 prediksi ekstrem), dan menghubungkan Mobile App ke endpoint API ini.

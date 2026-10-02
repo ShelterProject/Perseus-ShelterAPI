@@ -24,35 +24,17 @@
 import postgres from "postgres";
 
 export interface Env {
-  PG_HOST: string;
-  PG_PORT: string;
-  PG_USER: string;
-  PG_PASSWORD: string;
-  PG_DATABASE: string;
-  PG_CA_CERT: string;
+  // Binding Hyperdrive (lihat wrangler.toml.example) -- Worker gak pernah
+  // konek TCP mentah ke Aiven sendiri, cuma ke Hyperdrive yang sudah
+  // di-pool & di-manage Cloudflare. connectionString-nya siap pakai
+  // langsung sebagai argumen `postgres()`.
+  HYPERDRIVE: { connectionString: string };
 }
 
 function connect(env: Env): postgres.Sql {
-  return postgres({
-    host: env.PG_HOST,
-    port: Number(env.PG_PORT),
-    username: env.PG_USER,
-    password: env.PG_PASSWORD,
-    database: env.PG_DATABASE,
-    // `ssl: { ca }` bikin handshake TLS gagal berulang di socket Workers
-    // (custom CA pinning gak kesupport penuh), tiap percobaan connect()
-    // dihitung subrequest -> cepat ngebentur limit "too many subrequests".
-    // `require` tetap terenkripsi (TLS), cuma gak verifikasi CA Aiven --
-    // cukup buat koneksi internal Worker->DB yang kredensialnya sendiri
-    // rahasia (beda kasus sama lib/pg.py yang jalan di GitHub Actions,
-    // di sana verify-ca gak masalah karena bukan socket Workers).
-    ssl: "require",
-    max: 1,
-    // Keduanya bikin postgres.js jalanin query tambahan otomatis di awal
-    // koneksi (introspeksi pg_type, parse prepared statement) -- di-skip
-    // biar satu request cuma makan 1 round-trip query beneran.
+  return postgres(env.HYPERDRIVE.connectionString, {
+    max: 5,
     fetch_types: false,
-    prepare: false,
   });
 }
 

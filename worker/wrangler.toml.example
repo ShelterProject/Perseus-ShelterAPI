@@ -3,9 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Koneksi Postgres TIDAK lewat Hyperdrive -- Workers mendukung TCP socket
-# langsung (nodejs_compat), jadi connect persis sama caranya kayak
-# pipeline Python (lib/pg.py): host/user/password/database/CA cert, semua
-# dari Worker Secrets (`wrangler secret put ...`), BUKAN dari file ini.
-# Lihat deploy-worker.yml -- secret-nya dipakai ulang dari GitHub Secrets
-# yang sama (PG_HOST dkk), gak ada kredensial baru yang perlu dibuat.
+# Koneksi Postgres TCP langsung dari Worker (socket mentah, nodejs_compat)
+# gak reliable -- TLS handshake-nya suka retry-storm kena limit subrequest
+# Workers. Pakai Hyperdrive: Worker cuma bicara ke Hyperdrive, Hyperdrive
+# yang urus koneksi+pool beneran ke Aiven. ID-nya di-generate/di-refresh
+# otomatis tiap deploy oleh deploy-worker.yml (`wrangler hyperdrive
+# create/update`), BUKAN dibuat manual lewat dashboard.
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "__HYPERDRIVE_ID__"
