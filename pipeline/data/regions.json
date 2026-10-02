@@ -2639,14 +2639,6 @@
     {
       "bps_code": "6112",
       "province_code": "61",
-      "name": " ",
-      "province_name": "Kalimantan Barat",
-      "centroid_lat": -0.9525,
-      "centroid_lon": 109.3175
-    },
-    {
-      "bps_code": "6112",
-      "province_code": "61",
       "name": "Kubu Raya",
       "province_name": "Kalimantan Barat",
       "centroid_lat": -0.3923,

@@ -34,25 +34,34 @@ def main():
     data = resp.json()
 
     provinces = {}
-    regions = []
+    by_bps_code = {}
     for feature in data["features"]:
         props = feature["properties"]
         geom = feature.get("geometry")
         kdppum, kdbbps = props.get("KDPPUM"), props.get("KDBBPS")
         name, prov = props.get("WADMKK"), props.get("WADMPR")
-        if not (geom and kdppum and kdbbps and name):
+        # `name.strip()` -- InaRISK kadang punya fitur polygon duplikat
+        # per kabupaten (mis. pulau kecil/exclave terpisah) dengan field
+        # WADMKK isinya cuma spasi kosong. `if name` doang gak nangkep itu
+        # ("  " tetap truthy di Python), jadi harus di-strip dulu.
+        if not (geom and kdppum and kdbbps and name and name.strip()):
             continue
         centroid = shape(geom).centroid
-        regions.append({
+        if kdbbps in by_bps_code:
+            print(f"PERINGATAN: bps_code {kdbbps} duplikat ({by_bps_code[kdbbps]['name']!r} vs "
+                  f"{name!r}) -- pakai yang pertama ketemu, cek manual kalau curiga salah.")
+            continue
+        by_bps_code[kdbbps] = {
             "bps_code": kdbbps,
             "province_code": kdppum,
             "name": name,
             "province_name": prov,
             "centroid_lat": round(centroid.y, 5),
             "centroid_lon": round(centroid.x, 5),
-        })
+        }
         provinces[kdppum] = prov
 
+    regions = list(by_bps_code.values())
     OUT_PATH.write_text(
         json.dumps({"provinces": provinces, "regions": regions}, ensure_ascii=False, indent=2)
     )

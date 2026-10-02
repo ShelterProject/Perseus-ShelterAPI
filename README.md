@@ -82,7 +82,7 @@ dikerjakan" di bawah.)
 3. Trigger manual workflow **"Apply Postgres schema"** dari tab Actions --
    ini menerapkan `db/schema.sql` ke database Aiven kamu.
 4. Trigger manual **"Monthly prediction pipeline"** dari tab Actions --
-   langkah pertamanya (`seed_regions.py`) otomatis isi 515 kabupaten/kota +
+   langkah pertamanya (`seed_regions.py`) otomatis isi 514 kabupaten/kota +
    zona seismik, lalu lanjut fetch & training.
 
 Setelah itu, `monthly-pipeline.yml` jalan otomatis tiap tanggal 1, dan kalau

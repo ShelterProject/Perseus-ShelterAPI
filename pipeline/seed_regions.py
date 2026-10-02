@@ -1,7 +1,7 @@
 """Isi tabel `provinces`, `regions`, `seismic_zones` di Postgres (Aiven).
 
 Sumber `data/regions.json` sudah ditarik sekali dari layer resmi InaRISK BNPB
-(`batas_administrasi/MapServer/2`, Batas Kabupaten) -- 515 kabupaten/kota
+(`batas_administrasi/MapServer/2`, Batas Kabupaten) -- 514 kabupaten/kota
 se-Indonesia beserta titik tengah (centroid) tiap polygon-nya, dihitung
 pakai shapely. Data ini statis/jarang berubah (batas administrasi gak
 sering direvisi), jadi di-commit sebagai file, BUKAN ditarik ulang tiap
