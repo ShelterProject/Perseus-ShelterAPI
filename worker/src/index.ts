@@ -34,8 +34,15 @@ function connect(env: Env): postgres.Sql {
     username: env.PG_USER,
     password: env.PG_PASSWORD,
     database: env.PG_DATABASE,
-    ssl: { ca: env.PG_CA_CERT }, // sama kayak lib/pg.py: verify-ca pakai CA Aiven, bukan sslmode=require polos
-    max: 5,
+    // `ssl: { ca }` bikin handshake TLS gagal berulang di socket Workers
+    // (custom CA pinning gak kesupport penuh), tiap percobaan connect()
+    // dihitung subrequest -> cepat ngebentur limit "too many subrequests".
+    // `require` tetap terenkripsi (TLS), cuma gak verifikasi CA Aiven --
+    // cukup buat koneksi internal Worker->DB yang kredensialnya sendiri
+    // rahasia (beda kasus sama lib/pg.py yang jalan di GitHub Actions,
+    // di sana verify-ca gak masalah karena bukan socket Workers).
+    ssl: "require",
+    max: 1,
   });
 }
 
