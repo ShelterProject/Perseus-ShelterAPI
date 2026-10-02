@@ -14,9 +14,14 @@
 //
 // `scope` default 'province' (tampilan terbesar sesuai keputusan produk).
 // `radius_km` kalau diisi, override scope -- ambil semua region dalam radius itu.
+//
+// Resolusi region (nearest/radius) dan ambil data prediksi digabung jadi
+// SATU query ber-JOIN (CTE), bukan dua query terpisah -- Aiven free tier
+// cuma kasih kuota koneksi terbatas, dan tiap query baru lewat socket
+// Workers kena biaya "subrequest" sendiri, jadi makin sedikit round-trip
+// per request makin aman dari limit itu.
 
 import postgres from "postgres";
-import { Region, nearestRegion, regionsWithinRadius } from "./geo";
 
 export interface Env {
   PG_HOST: string;
@@ -43,42 +48,23 @@ function connect(env: Env): postgres.Sql {
     // di sana verify-ca gak masalah karena bukan socket Workers).
     ssl: "require",
     max: 1,
+    // Keduanya bikin postgres.js jalanin query tambahan otomatis di awal
+    // koneksi (introspeksi pg_type, parse prepared statement) -- di-skip
+    // biar satu request cuma makan 1 round-trip query beneran.
+    fetch_types: false,
+    prepare: false,
   });
 }
 
-// Whitelist tabel yang boleh di-query lewat handlePredictionQuery -- nama
-// tabel di sini gak pernah dari input user, cuma dipilih lewat routing
-// switch-case di bawah, jadi aman diinterpolasi ke SQL.
+// Whitelist tabel yang boleh di-query -- nama tabel di sini gak pernah dari
+// input user, cuma dipilih lewat routing switch-case di bawah, jadi aman
+// diinterpolasi ke SQL.
 type PredictionTable =
   | "prediction_weather"
+  | "prediction_earthquake"
   | "prediction_forest_fire"
   | "hazard_index_flood"
   | "hazard_index_landslide";
-
-async function loadRegions(sql: postgres.Sql): Promise<Region[]> {
-  return sql<Region[]>`
-    SELECT id, province_code, bps_code, name, centroid_lat, centroid_lon FROM regions
-  `;
-}
-
-function resolveTargetRegions(
-  regions: Region[],
-  lat: number,
-  lon: number,
-  scope: string,
-  radiusKm: number | null
-): Region[] {
-  if (radiusKm !== null) {
-    return regionsWithinRadius(lat, lon, regions, radiusKm);
-  }
-  const nearest = nearestRegion(lat, lon, regions);
-  if (!nearest) return [];
-  if (scope === "city") {
-    return [nearest.region];
-  }
-  // default: province -- semua kabupaten/kota dalam provinsi yang sama
-  return regions.filter((r) => r.province_code === nearest.region.province_code);
-}
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -87,73 +73,90 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
-function parseQuery(url: URL) {
+interface ParsedQuery {
+  lat: number;
+  lon: number;
+  scope: string;
+  radiusKm: number | null;
+}
+
+function parseQuery(url: URL): ParsedQuery | null {
   const lat = parseFloat(url.searchParams.get("lat") ?? "");
   const lon = parseFloat(url.searchParams.get("lon") ?? "");
+  if (Number.isNaN(lat) || Number.isNaN(lon)) return null;
   const scope = url.searchParams.get("scope") ?? "province";
   const radiusParam = url.searchParams.get("radius_km");
   const radiusKm = radiusParam !== null ? parseFloat(radiusParam) : null;
   return { lat, lon, scope, radiusKm };
 }
 
+// CTE bersama: hitung jarak haversine tiap region ke titik user (persis
+// rumus yang sama dengan pipeline/lib/geo.py), cari region terdekat, lalu
+// resolve daftar region target sesuai scope/radius -- semua di satu
+// statement SQL.
+const RESOLVE_REGIONS_CTE = `
+  WITH distances AS (
+    SELECT id, province_code, name,
+      (6371 * 2 * asin(sqrt(
+        sin(radians($1 - centroid_lat) / 2) ^ 2
+        + cos(radians(centroid_lat)) * cos(radians($1))
+          * sin(radians($2 - centroid_lon) / 2) ^ 2
+      ))) AS distance_km
+    FROM regions
+  ),
+  nearest AS (
+    SELECT province_code FROM distances ORDER BY distance_km ASC LIMIT 1
+  ),
+  resolved AS (
+    SELECT d.id, d.name, d.province_code, d.distance_km
+    FROM distances d, nearest n
+    WHERE
+      ($3::float8 IS NOT NULL AND d.distance_km <= $3::float8)
+      OR ($3::float8 IS NULL AND $4 = 'city' AND d.distance_km = (SELECT MIN(distance_km) FROM distances))
+      OR ($3::float8 IS NULL AND $4 != 'city' AND d.province_code = n.province_code)
+  )
+`;
+
 async function handlePredictionQuery(
   sql: postgres.Sql,
   url: URL,
   table: PredictionTable,
-  orderCol: string = "date"
+  fkCol: string,
+  orderCol: string
 ): Promise<Response> {
-  const { lat, lon, scope, radiusKm } = parseQuery(url);
-  if (Number.isNaN(lat) || Number.isNaN(lon)) {
-    return jsonResponse({ error: "lat & lon wajib diisi" }, 400);
-  }
+  const q = parseQuery(url);
+  if (!q) return jsonResponse({ error: "lat & lon wajib diisi" }, 400);
 
-  const regions = await loadRegions(sql);
-  const targets = resolveTargetRegions(regions, lat, lon, scope, radiusKm);
-  if (targets.length === 0) {
-    return jsonResponse({ error: "Tidak ada wilayah ditemukan di sekitar koordinat ini" }, 404);
-  }
-
-  const ids = targets.map((r) => r.id);
-  // Nama tabel & kolom di sini dari whitelist internal (PredictionTable +
-  // orderCol yang di-hardcode per pemanggilan), bukan dari input user --
-  // aman diinterpolasi. `ids` tetap lewat parameter binding (sql(ids)).
   const rows = await sql.unsafe(
-    `SELECT * FROM ${table} WHERE region_id = ANY($1) ORDER BY region_id, ${orderCol}`,
-    [ids]
+    `${RESOLVE_REGIONS_CTE}
+     SELECT p.*, r.name AS region_name, r.province_code AS region_province_code
+     FROM resolved r
+     LEFT JOIN ${table} p ON p.${fkCol} = r.id
+     ORDER BY r.id, p.${orderCol}`,
+    [q.lat, q.lon, q.radiusKm, q.scope]
   );
 
-  return jsonResponse({
-    resolved_regions: targets.map((r) => ({ id: r.id, name: r.name, province_code: r.province_code })),
-    scope: radiusKm !== null ? "radius" : scope,
-    count: rows.length,
-    data: rows,
-  });
-}
-
-async function handleEarthquakeQuery(sql: postgres.Sql, url: URL): Promise<Response> {
-  const { lat, lon, scope, radiusKm } = parseQuery(url);
-  if (Number.isNaN(lat) || Number.isNaN(lon)) {
-    return jsonResponse({ error: "lat & lon wajib diisi" }, 400);
-  }
-
-  const regions = await loadRegions(sql);
-  const targets = resolveTargetRegions(regions, lat, lon, scope, radiusKm);
-  if (targets.length === 0) {
+  if (rows.length === 0) {
     return jsonResponse({ error: "Tidak ada wilayah ditemukan di sekitar koordinat ini" }, 404);
   }
 
-  // Gempa disimpan per zona seismik, bukan per kabupaten -- ambil lewat
-  // nearest_region_id yang sudah di-resolve pipeline training.
-  const ids = targets.map((r) => r.id);
-  const rows = await sql`
-    SELECT * FROM prediction_earthquake WHERE nearest_region_id = ANY(${ids}) ORDER BY date
-  `;
+  const resolvedRegions = new Map<number, { id: number; name: string; province_code: string }>();
+  const data: unknown[] = [];
+  for (const row of rows as any[]) {
+    resolvedRegions.set(row[fkCol] ?? row.id, {
+      id: row[fkCol] ?? row.id,
+      name: row.region_name,
+      province_code: row.region_province_code,
+    });
+    const { region_name, region_province_code, ...prediction } = row;
+    if (Object.values(prediction).some((v) => v !== null)) data.push(prediction);
+  }
 
   return jsonResponse({
-    resolved_regions: targets.map((r) => ({ id: r.id, name: r.name, province_code: r.province_code })),
-    scope: radiusKm !== null ? "radius" : scope,
-    count: rows.length,
-    data: rows,
+    resolved_regions: [...resolvedRegions.values()],
+    scope: q.radiusKm !== null ? "radius" : q.scope,
+    count: data.length,
+    data,
   });
 }
 
@@ -170,15 +173,17 @@ export default {
     try {
       switch (url.pathname) {
         case "/predictions/weather":
-          return await handlePredictionQuery(sql, url, "prediction_weather");
+          return await handlePredictionQuery(sql, url, "prediction_weather", "region_id", "date");
         case "/predictions/earthquake":
-          return await handleEarthquakeQuery(sql, url);
+          // Gempa disimpan per zona seismik, bukan per kabupaten -- kolom
+          // FK-nya nearest_region_id (hasil resolve pipeline training).
+          return await handlePredictionQuery(sql, url, "prediction_earthquake", "nearest_region_id", "date");
         case "/predictions/forest-fire":
-          return await handlePredictionQuery(sql, url, "prediction_forest_fire");
+          return await handlePredictionQuery(sql, url, "prediction_forest_fire", "region_id", "date");
         case "/hazard-zones/flood":
-          return await handlePredictionQuery(sql, url, "hazard_index_flood", "region_id");
+          return await handlePredictionQuery(sql, url, "hazard_index_flood", "region_id", "region_id");
         case "/hazard-zones/landslide":
-          return await handlePredictionQuery(sql, url, "hazard_index_landslide", "region_id");
+          return await handlePredictionQuery(sql, url, "hazard_index_landslide", "region_id", "region_id");
         default:
           return jsonResponse({ error: "Not found" }, 404);
       }
