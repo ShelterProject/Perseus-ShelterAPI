@@ -1,11 +1,14 @@
 name: Hazard index refresh (banjir & longsor)
 
 # Sengaja TERPISAH dari monthly-pipeline.yml: hazard_index_flood/landslide
-# bukan time-series hasil ML, cuma indeks statis dari InaRISK BNPB yang
-# jarang berubah. Jalan manual atau tahunan, bukan tiap bulan.
+# bukan time-series hasil ML (gak ada training-nya, cuma sampling ulang
+# index InaRISK BNPB ke skala 0-1 kita), jadi strukturnya beda -- tapi
+# jadwalnya tetap BULANAN, ngikutin dugaan kuat InaRISK sendiri update
+# peta-nya tiap bulan (belum sempat diverifikasi resmi -- kalau ternyata
+# InaRISK update-nya lebih jarang/lebih sering, sesuaikan cron di bawah).
 on:
   schedule:
-    - cron: "0 0 1 1 *"   # 1 Januari, jaga-jaga kalau InaRISK update peta
+    - cron: "0 1 1 * *"   # tanggal 1 tiap bulan, 01:00 UTC (1 jam setelah monthly-pipeline)
   workflow_dispatch: {}
 
 jobs:

@@ -3,10 +3,10 @@ per titik tengah kabupaten/kota, simpan ke hazard_index_flood /
 hazard_index_landslide.
 
 BEDA dari fetch_weather/fetch_earthquake/fetch_hotspots: ini BUKAN
-time-series dan BUKAN bagian job ML bulanan (gak ada training-nya, cuma
-konversi index InaRISK ke skala 0-1 kita). Jalankan terpisah, siklusnya
-lebih jarang (mis. tahunan / kapan pun InaRISK merilis update peta),
-sesuai keputusan sebelumnya bahwa data ini sifatnya statis.
+time-series dan BUKAN bagian job ML (gak ada training/forecast-nya, cuma
+sampling ulang index InaRISK ke skala 0-1 kita). Dijalankan workflow
+terpisah (`hazard-index-refresh.yml`), tapi jadwalnya tetap bulanan,
+ngikutin dugaan InaRISK sendiri update peta-nya tiap bulan.
 """
 import sys
 from datetime import date
